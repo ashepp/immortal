@@ -111,6 +111,28 @@ install_client() {
   a install -r "$apk" >/dev/null 2>&1 && ok "Installed $PKG" || die "Install failed."
 }
 
+start_installd() {
+  # Start the shell-privileged install daemon so Immortal's on-device App Store
+  # can install apps SILENTLY (the launcher drops APKs in a queue; this installs
+  # them as the shell user). Essential on the Gen-1 Portal+, whose built-in
+  # installer dialog is broken; a nice one-tap upgrade on every other model too.
+  # Like all non-root helpers (Shizuku, etc.), it does NOT survive a reboot —
+  # re-run `provision.sh --installd` (or the kit) to restart it.
+  [ -f installd.sh ] || { warn "installd.sh missing — skipping silent-install daemon"; return; }
+  step "Starting the silent-install daemon"
+  a push installd.sh /data/local/tmp/installd.sh >/dev/null 2>&1
+  a shell "chmod 755 /data/local/tmp/installd.sh" >/dev/null 2>&1
+  # Kill any previous instance, then start detached.
+  a shell "for p in \$(ps -A 2>/dev/null | grep installd.sh | grep -v grep | awk '{print \$2}'); do kill \$p; done" >/dev/null 2>&1
+  a shell "setsid sh /data/local/tmp/installd.sh /sdcard/Android/data/$PKG/files/installq >/dev/null 2>&1 &" >/dev/null 2>&1
+  sleep 2
+  if a shell "cat /sdcard/Android/data/$PKG/files/installq/.heartbeat 2>/dev/null" | grep -q '[0-9]'; then
+    ok "Silent-install daemon running"
+  else
+    warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)"
+  fi
+}
+
 install_apps() {
   # Silent adb-install of the configured apps. Works on every model — the only
   # reliable path on devices whose on-device installer dialog is broken.
@@ -238,6 +260,7 @@ do_provision() {
   resolve_adb
   wait_for_device
   install_client
+  start_installd
   install_apps
   push_assets
   grant_perms
@@ -286,6 +309,7 @@ case "${1:-}" in
   --restore|-r) do_restore ;;
   --status|-s)  do_status ;;
   --apps|-a)    resolve_adb; wait_for_device; install_apps ;;
+  --installd|-d) resolve_adb; wait_for_device; start_installd ;;
   --help|-h)    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;
   *)            die "Unknown option: $1 (use --restore, --status, or no argument)" ;;

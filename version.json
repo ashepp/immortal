@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
+  "versionCode": 7,
+  "versionName": "1.6",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.5 — weather is now reliable: it caches your location, falls back across geolocation providers (so a rate-limited one no longer blanks the weather), and retries. Affects both the home header and the photo frame."
+  "notes": "Immortal 1.6 — the App Store and self-update now install SILENTLY through the provisioning kit's install daemon when it's running (no system dialog). This makes on-device installs work on the Gen-1 Portal+, whose built-in installer UI is broken, and it's a one-tap upgrade on every model. Falls back to the system installer when the daemon isn't running."
 }

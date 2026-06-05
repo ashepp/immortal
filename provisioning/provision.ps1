@@ -11,7 +11,7 @@
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Restore   # undo
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Status    # show state
 #>
-param([switch]$Restore, [switch]$Status, [switch]$Apps)
+param([switch]$Restore, [switch]$Status, [switch]$Apps, [switch]$Installd)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -91,6 +91,17 @@ function Install-Client {
   Step "Installing client app ($($apk.Name))"
   A install -r $apk.FullName | Out-Null
   Ok "Installed $($cfg["PKG"])"
+}
+function Start-Installd {
+  if (-not (Test-Path "installd.sh")) { Warn "installd.sh missing - skipping silent-install daemon"; return }
+  Step "Starting the silent-install daemon"
+  A push installd.sh /data/local/tmp/installd.sh | Out-Null
+  A shell "chmod 755 /data/local/tmp/installd.sh" | Out-Null
+  A shell "kill `$(ps -A 2>/dev/null | grep installd.sh | grep -v grep | awk '{print `$2}') 2>/dev/null" | Out-Null
+  A shell "setsid sh /data/local/tmp/installd.sh /sdcard/Android/data/$($cfg['PKG'])/files/installq >/dev/null 2>&1 &" | Out-Null
+  Start-Sleep -Seconds 2
+  $hb = (A shell "cat /sdcard/Android/data/$($cfg['PKG'])/files/installq/.heartbeat 2>/dev/null")
+  if ($hb -match '[0-9]') { Ok "Silent-install daemon running" } else { Warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)" }
 }
 function Install-Apps {
   # Silent adb-install of configured apps — the reliable path on models whose
@@ -197,6 +208,12 @@ function Load-State {
 }
 
 # ----- modes -----------------------------------------------------------------
+if ($Installd) {
+  Wait-Device
+  Start-Installd
+  exit 0
+}
+
 if ($Apps) {
   Wait-Device
   Install-Apps
@@ -243,6 +260,7 @@ Write-Host "This will modify your Portal: install an app, replace the home scree
 Write-Host "and disable Meta's app-install verifier. Run with -Restore to undo.`n" -ForegroundColor DarkGray
 Wait-Device
 Install-Client
+Start-Installd
 Install-Apps
 Push-Assets
 Grant-Perms

@@ -125,7 +125,16 @@ object StoreCatalog {
         val apk = File(context.cacheDir, "${app.packageName}.apk")
         download(url, apk)
         main.post { status(app.packageName, "Installing…") }
-        commit(context, app.packageName, apk)
+        if (InstallDaemon.isAvailable(context)) {
+          // Silent install via the provisioning daemon — no system dialog.
+          val ok = InstallDaemon.install(context, apk, app.packageName)
+          main.post { status(app.packageName, if (ok) "Installed ✓" else "Install failed") }
+        } else {
+          // Fall back to the system installer (works on models with a working
+          // installer dialog; on the Gen-1 Portal+ that dialog is broken, so
+          // re-running the kit to restart the daemon is the fix).
+          commit(context, app.packageName, apk)
+        }
       } catch (t: Throwable) {
         main.post { status(app.packageName, "Error: ${t.message ?: t.javaClass.simpleName}") }
       }

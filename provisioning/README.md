@@ -42,16 +42,34 @@ installs → freeze OS updates → set launcher → set screensaver. Each step i
 To ship your own app instead of the sample, replace `apks/app-debug.apk`, drop photos in
 `assets/`, and update `PKG`/`HOME_ACTIVITY`/`DREAM_SERVICE` in `config.env`.
 
+### Silent on-device installs (the install daemon)
+
+Provisioning starts a tiny **install daemon** (`installd.sh`) via ADB. It runs as
+the shell user — the same trick [Shizuku](https://github.com/RikkaApps/Shizuku)
+uses — so Immortal's on-device App Store and self-update can install apps
+**silently** (the launcher drops an APK in a queue; the daemon `pm install`s it).
+
+This is what makes on-device installs work on the **Gen-1 Portal+** (Android 9),
+whose built-in install-confirmation dialog is broken (a blank window with no
+buttons — a Meta system-UI bug we can't fix from an app). It's also a one-tap,
+no-dialog upgrade on every other model.
+
+Like all non-root helpers (Shizuku included), the daemon **does not survive a
+reboot**. After a reboot, restart it (no full re-provision needed):
+
+```bash
+./provision.sh --installd          # macOS/Linux
+# powershell ... provision.ps1 -Installd   # Windows
+```
+
+When the daemon isn't running, the store falls back to the system installer
+(works on models with a working dialog; on the Gen-1 Portal+ restart the daemon).
+
 ### Pre-installing apps
 
-`PREINSTALL_FDROID` / `PREINSTALL_APKS` install apps during setup via a silent
-`adb install`. This is the **reliable way to add apps on the Gen-1 Portal+**
-(Android 9), whose built-in install-confirmation dialog is broken (a blank window
-with no buttons) — a Meta system-UI bug we can't fix from an app. On newer models
-the on-device App Store works normally; pre-installing just gives every device a
-few useful apps out of the box.
-
-You can also run just this step later, without re-provisioning:
+`PREINSTALL_FDROID` / `PREINSTALL_APKS` also install apps during setup via a
+silent `adb install`, so every freshly provisioned Portal has a few useful apps
+out of the box. You can run just this step later:
 
 ```bash
 ./provision.sh --apps          # macOS/Linux

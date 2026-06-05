@@ -1,0 +1,79 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+package com.immortal.launcher
+
+import android.content.Context
+import java.io.File
+
+/**
+ * Client for the optional shell-privileged install daemon set up by the
+ * provisioning kit (`installd.sh`, started via ADB as the shell user).
+ *
+ * When the daemon is running, Immortal can install/update apps **silently** by
+ * dropping the APK into a watched queue — no system installer dialog at all.
+ * This is what makes the App Store and self-update work on the Gen-1 Portal+,
+ * whose built-in installer UI is broken, and it's a one-tap upgrade on every
+ * other model too. When the daemon isn't running (e.g. after a reboot, since
+ * non-root helpers don't survive one), callers fall back to the normal
+ * PackageInstaller flow.
+ *
+ * The daemon renames `<name>.apk` → `<name>.apk.done` / `.failed` to report
+ * results; we write APKs atomically (`.part` → rename) so it never sees a
+ * partial file.
+ */
+object InstallDaemon {
+
+  private fun queueDir(context: Context) = File(context.getExternalFilesDir(null), "installq")
+
+  /** True if the daemon is alive (it writes a unix-time heartbeat every ~2s). */
+  fun isAvailable(context: Context): Boolean {
+    val ts =
+        runCatching { File(queueDir(context), ".heartbeat").readText().trim().toLong() }
+            .getOrDefault(0L)
+    return (System.currentTimeMillis() / 1000 - ts) in 0..20
+  }
+
+  /**
+   * Queue [apk] for the daemon and block (on a background thread) until it
+   * reports a result or [timeoutMs] elapses. Returns true on success.
+   */
+  fun install(context: Context, apk: File, name: String, timeoutMs: Long = 180_000): Boolean {
+    val d = queueDir(context).apply { mkdirs() }
+    val target = File(d, "$name.apk")
+    val done = File(d, "$name.apk.done")
+    val failed = File(d, "$name.apk.failed")
+    val log = File(d, "$name.apk.log")
+    listOf(target, done, failed, log).forEach { runCatching { it.delete() } }
+
+    // Write to a temp name, then atomically rename in — the daemon only ever
+    // sees a complete APK.
+    val part = File(d, "$name.part")
+    runCatching { apk.copyTo(part, overwrite = true) }.getOrElse {
+      part.delete()
+      return false
+    }
+    if (!part.renameTo(target)) {
+      part.delete()
+      return false
+    }
+
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+      if (done.exists()) {
+        listOf(done, log).forEach { runCatching { it.delete() } }
+        return true
+      }
+      if (failed.exists()) {
+        listOf(failed, log).forEach { runCatching { it.delete() } }
+        return false
+      }
+      Thread.sleep(800)
+    }
+    return false
+  }
+}

@@ -85,7 +85,14 @@ object UpdateManager {
         val apk = File(context.cacheDir, "immortal-update.apk")
         download(info.apkUrl, apk)
         main.post { status("Installing…") }
-        commit(context, apk)
+        if (InstallDaemon.isAvailable(context)) {
+          // Silent self-update via the provisioning daemon (also the only path
+          // that works on the Gen-1 Portal+, whose installer dialog is broken).
+          val ok = InstallDaemon.install(context, apk, "immortal-update")
+          main.post { status(if (ok) "Updated" else "Update failed") }
+        } else {
+          commit(context, apk)
+        }
       } catch (t: Throwable) {
         main.post { status("Update failed: ${t.message ?: t.javaClass.simpleName}") }
       }
