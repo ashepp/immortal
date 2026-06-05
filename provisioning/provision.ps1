@@ -104,22 +104,23 @@ function Start-Installd {
   if ($hb -match '[0-9]') { Ok "Silent-install daemon running" } else { Warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)" }
 }
 function Start-Shizuku {
-  # OPTIONAL power-user add-on. If Shizuku is installed, start its server over ADB
-  # so apps that speak the Shizuku API (e.g. Aurora's Shizuku install mode) can
-  # install silently. Most users don't need it — Immortal's "Open with Immortal"
-  # handler already gives Aurora et al. a silent path. Like our own daemon, the
-  # server does NOT survive a reboot; re-run with -Shizuku to restart it.
+  # Lets third-party stores (Aurora's Shizuku installer) install silently on the
+  # Gen-1 Portal+, whose stock installer is broken. Auto-installs Shizuku only on
+  # Gen-1 (API < 29) where it's needed; on newer Portals it's skipped. If Shizuku
+  # is already installed on any model, its server is started below. Like our own
+  # daemon, the server does NOT survive a reboot; re-run with -Shizuku to restart.
   $SZ = "moe.shizuku.privileged.api"
   $installed = (A shell pm list packages $SZ) -match "package:$SZ"
+  $sdk = [int]((A shell getprop ro.build.version.sdk).Trim())
   if (-not $installed) {
-    if ($cfg["SHIZUKU_APK_URL"]) {
-      Step "Installing Shizuku"
+    if ($cfg["SHIZUKU_APK_URL"] -and $sdk -lt 29) {
+      Step "Installing Shizuku (enables Aurora Store etc. on this Gen-1 Portal)"
       $tmp = Join-Path (Split-Path -Parent $cfg["APK_GLOB"]) "shizuku.apk"
       New-Item -ItemType Directory -Force -Path (Split-Path -Parent $tmp) | Out-Null
       try { Invoke-WebRequest $cfg["SHIZUKU_APK_URL"] -OutFile $tmp; A install -r $tmp | Out-Null; Ok "Shizuku installed" }
       catch { Warn "Shizuku install failed - skipping"; Remove-Item $tmp -ErrorAction SilentlyContinue; return }
       Remove-Item $tmp -ErrorAction SilentlyContinue
-    } else { return }  # Not installed and no URL configured: nothing to do.
+    } else { return }  # Not installed and not a Gen-1 (or no URL): nothing to do.
   }
   Step "Starting Shizuku server (for third-party silent installs)"
   # Resolve the version/ABI-specific starter binary at runtime (the install-dir

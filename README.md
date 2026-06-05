@@ -83,16 +83,20 @@ Newer Portals (Portal Go, Mini, gen-2) have a working installer and don't need a
 Google account. On the Gen-1 Portal+ its two default installer modes — "Session" and "Native" —
 both run into the broken stock installer, and unlike a file you download in Chrome, Aurora keeps
 its APK in private storage where Immortal's helper can't reach it. The path that *does* work is
-Aurora's **Shizuku** installer, which installs through the same privileged channel Immortal uses:
+Aurora's **Shizuku** installer, which installs through the same privileged channel Immortal uses.
 
-1. Install **Shizuku** (it's in the Immortal App Store) and **Aurora Store**.
-2. Run the provisioning kit's Shizuku step once to start its server: `./provision.sh --shizuku`
-   (or `provision.ps1 -Shizuku`). Like Immortal's own helper, it must be re-run after a reboot.
-3. In **Aurora → Settings → Installation → Installation method**, choose **Shizuku installer**.
+The provisioning kit sets most of this up for you: on a Gen-1 Portal it **installs Shizuku and
+starts its server automatically** (it skips this on newer Portals, which don't need it). So all
+that's left is to point Aurora at it, a one-time, two-tap step:
+
+1. Install **Aurora Store** from the Immortal App Store.
+2. In **Aurora → Settings → Installation → Installation method**, choose **Shizuku installer**.
    The first install prompts "Allow Aurora Store to access Shizuku?" — tap **Allow all the time**.
 
 After that, Aurora installs Play-Store apps silently, including split APKs — no dialog, no broken
-installer. Verified end-to-end on a Portal+ installing Spotify.
+installer (verified end-to-end on a Portal+ installing Spotify). Shizuku's server, like Immortal's
+own helper, doesn't survive a reboot; the kit restarts it on its next run, or run
+`./provision.sh --shizuku` (`provision.ps1 -Shizuku`).
 
 ## Releasing
 

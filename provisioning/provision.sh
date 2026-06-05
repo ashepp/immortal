@@ -151,11 +151,16 @@ start_shizuku() {
   # Like our own daemon — and by Shizuku's own design — the server does NOT
   # survive a reboot. Re-run `provision.sh --shizuku` to restart it.
   local SZ=moe.shizuku.privileged.api
-  local installed
+  local installed sdk
   installed="$(a shell pm list packages "$SZ" 2>/dev/null | tr -d '\r' | grep -c "package:$SZ")"
+  sdk="$(a shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
   if [ "${installed:-0}" = 0 ]; then
-    if [ -n "${SHIZUKU_APK_URL:-}" ]; then
-      step "Installing Shizuku"
+    # Auto-install Shizuku only where it's actually needed: the Gen-1 Portal+
+    # (API < 29), whose stock installer is broken. Newer Portals install fine
+    # without it, so don't clutter them. (If a user installs Shizuku themselves on
+    # any model, we'll still start its server below.)
+    if [ -n "${SHIZUKU_APK_URL:-}" ] && [ "${sdk:-99}" -lt 29 ] 2>/dev/null; then
+      step "Installing Shizuku (enables Aurora Store etc. on this Gen-1 Portal)"
       local tmp="$(dirname "$APK_GLOB")/shizuku.apk"; mkdir -p "$(dirname "$tmp")"
       if curl -fsL "$SHIZUKU_APK_URL" -o "$tmp" 2>/dev/null && a install -r "$tmp" >/dev/null 2>&1; then
         ok "Shizuku installed"
@@ -164,7 +169,7 @@ start_shizuku() {
       fi
       rm -f "$tmp"
     else
-      return  # Not installed and no URL configured: nothing to do, silently.
+      return  # Not installed and not a Gen-1 (or no URL): nothing to do, silently.
     fi
   fi
   step "Starting Shizuku server (for third-party silent installs)"
