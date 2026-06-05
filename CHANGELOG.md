@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8 (2026-06-05)
+
+Universal installer — make sideloading work on the Gen-1 Portal+, whose built-in Android installer dialog is broken (renders with no buttons).
+
+- **"Open with Immortal"** (`ApkInstallActivity`): opening any APK — from Chrome, a file manager, or a third-party store like Aurora ("Session/Native" installer mode) — routes through Immortal's silent daemon. Shows an "Install <app>? via Immortal" card; installs with no system dialog.
+- **"Install an APK"** browser (`ApkBrowserActivity`): lists APKs in Downloads and installs them on a tap, from the App Store header.
+- **Shizuku** (optional): `provision.sh --shizuku` / `-Shizuku` installs Shizuku (if `SHIZUKU_APK_URL` set) and starts its server over ADB, for apps that use the Shizuku API directly. Resolves the version/ABI-specific starter at runtime. Like the daemon, restart after a reboot.
+- **Paused banner** copy clarified for Gen-1 ("reinstall Immortal to restore").
+
 ## 1.0 (2026-06-05)
 
 Initial public release of Immortal — a custom home-screen layer for discontinued Meta Portal devices.

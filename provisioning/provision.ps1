@@ -11,7 +11,7 @@
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Restore   # undo
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Status    # show state
 #>
-param([switch]$Restore, [switch]$Status, [switch]$Apps, [switch]$Installd)
+param([switch]$Restore, [switch]$Status, [switch]$Apps, [switch]$Installd, [switch]$Shizuku)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -102,6 +102,34 @@ function Start-Installd {
   Start-Sleep -Seconds 2
   $hb = (A shell "cat /sdcard/Android/data/$($cfg['PKG'])/files/installq/.heartbeat 2>/dev/null")
   if ($hb -match '[0-9]') { Ok "Silent-install daemon running" } else { Warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)" }
+}
+function Start-Shizuku {
+  # OPTIONAL power-user add-on. If Shizuku is installed, start its server over ADB
+  # so apps that speak the Shizuku API (e.g. Aurora's Shizuku install mode) can
+  # install silently. Most users don't need it — Immortal's "Open with Immortal"
+  # handler already gives Aurora et al. a silent path. Like our own daemon, the
+  # server does NOT survive a reboot; re-run with -Shizuku to restart it.
+  $SZ = "moe.shizuku.privileged.api"
+  $installed = (A shell pm list packages $SZ) -match "package:$SZ"
+  if (-not $installed) {
+    if ($cfg["SHIZUKU_APK_URL"]) {
+      Step "Installing Shizuku"
+      $tmp = Join-Path (Split-Path -Parent $cfg["APK_GLOB"]) "shizuku.apk"
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $tmp) | Out-Null
+      try { Invoke-WebRequest $cfg["SHIZUKU_APK_URL"] -OutFile $tmp; A install -r $tmp | Out-Null; Ok "Shizuku installed" }
+      catch { Warn "Shizuku install failed - skipping"; Remove-Item $tmp -ErrorAction SilentlyContinue; return }
+      Remove-Item $tmp -ErrorAction SilentlyContinue
+    } else { return }  # Not installed and no URL configured: nothing to do.
+  }
+  Step "Starting Shizuku server (for third-party silent installs)"
+  # Resolve the version/ABI-specific starter binary at runtime (the install-dir
+  # hash and ABI vary per device, so don't hard-code them).
+  $apkpath = ((A shell pm path $SZ) -replace 'package:', '').Trim() -split "`n" | Select-Object -First 1
+  $apkdir  = (A shell "dirname '$apkpath'").Trim()
+  $starter = (A shell "ls $apkdir/lib/*/libshizuku.so 2>/dev/null").Trim() -split "`n" | Select-Object -First 1
+  if (-not $starter) { Warn "Couldn't find Shizuku's starter - open the Shizuku app and tap Start once"; return }
+  if ((A shell "$starter") -match 'exit with 0') { Ok "Shizuku server running" }
+  else { Warn "Shizuku didn't confirm startup - open the Shizuku app to check its status" }
 }
 function Install-Apps {
   # Silent adb-install of configured apps — the reliable path on models whose
@@ -216,6 +244,12 @@ if ($Installd) {
   exit 0
 }
 
+if ($Shizuku) {
+  Wait-Device
+  Start-Shizuku
+  exit 0
+}
+
 if ($Apps) {
   Wait-Device
   Install-Apps
@@ -263,6 +297,7 @@ Write-Host "and disable Meta's app-install verifier. Run with -Restore to undo.`
 Wait-Device
 Install-Client
 Start-Installd
+Start-Shizuku
 Install-Apps
 Push-Assets
 Grant-Perms

@@ -12,6 +12,9 @@
 #   ./provision.sh            provision the connected Portal
 #   ./provision.sh --restore  put the stock launcher/screensaver/verifier back
 #   ./provision.sh --status   show what's currently set
+#   ./provision.sh --installd restart only the silent-install daemon
+#   ./provision.sh --shizuku  start the Shizuku server (optional; for apps that
+#                             use the Shizuku API, e.g. Aurora's Shizuku mode)
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,6 +135,52 @@ start_installd() {
     ok "Silent-install daemon running"
   else
     warn "Daemon didn't report a heartbeat (the store will fall back to the system installer)"
+  fi
+}
+
+start_shizuku() {
+  # OPTIONAL power-user add-on. If Shizuku (moe.shizuku.privileged.api) is on the
+  # device, start its server over ADB so third-party apps that speak the Shizuku
+  # API — e.g. Aurora Store's "Shizuku" install mode — can install silently too.
+  #
+  # Most users do NOT need this: Immortal's own "Open with Immortal" handler
+  # already gives Aurora and friends a silent path (point their installer at
+  # "Session"/"Native" and the install intent lands on Immortal -> our daemon).
+  # Shizuku is the belt-and-suspenders option for apps that ONLY speak its API.
+  #
+  # Like our own daemon — and by Shizuku's own design — the server does NOT
+  # survive a reboot. Re-run `provision.sh --shizuku` to restart it.
+  local SZ=moe.shizuku.privileged.api
+  local installed
+  installed="$(a shell pm list packages "$SZ" 2>/dev/null | tr -d '\r' | grep -c "package:$SZ")"
+  if [ "${installed:-0}" = 0 ]; then
+    if [ -n "${SHIZUKU_APK_URL:-}" ]; then
+      step "Installing Shizuku"
+      local tmp="$(dirname "$APK_GLOB")/shizuku.apk"; mkdir -p "$(dirname "$tmp")"
+      if curl -fsL "$SHIZUKU_APK_URL" -o "$tmp" 2>/dev/null && a install -r "$tmp" >/dev/null 2>&1; then
+        ok "Shizuku installed"
+      else
+        warn "Shizuku install failed — skipping"; rm -f "$tmp"; return
+      fi
+      rm -f "$tmp"
+    else
+      return  # Not installed and no URL configured: nothing to do, silently.
+    fi
+  fi
+  step "Starting Shizuku server (for third-party silent installs)"
+  # Derive the version-specific starter path. Shizuku ships a tiny native binary
+  # (libshizuku.so) under its install dir's lib/<abi>/ folder; running it as the
+  # shell user starts the server. The install-dir hash and ABI vary per device,
+  # so resolve both at runtime rather than hard-coding them.
+  local apkpath apkdir starter
+  apkpath="$(a shell pm path "$SZ" 2>/dev/null | tr -d '\r' | sed 's/^package://' | head -1)"
+  apkdir="$(a shell "dirname '$apkpath'" 2>/dev/null | tr -d '\r')"
+  starter="$(a shell "ls $apkdir/lib/*/libshizuku.so 2>/dev/null" | tr -d '\r' | head -1)"
+  [ -n "$starter" ] || { warn "Couldn't find Shizuku's starter — open the Shizuku app and tap Start once"; return; }
+  if a shell "$starter" 2>&1 | grep -q 'exit with 0'; then
+    ok "Shizuku server running"
+  else
+    warn "Shizuku didn't confirm startup — open the Shizuku app to check its status"
   fi
 }
 
@@ -265,6 +314,7 @@ do_provision() {
   wait_for_device
   install_client
   start_installd
+  start_shizuku
   install_apps
   push_assets
   grant_perms
@@ -314,6 +364,7 @@ case "${1:-}" in
   --status|-s)  do_status ;;
   --apps|-a)    resolve_adb; wait_for_device; install_apps ;;
   --installd|-d) resolve_adb; wait_for_device; start_installd ;;
+  --shizuku|-z) resolve_adb; wait_for_device; start_shizuku ;;
   --help|-h)    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;
   *)            die "Unknown option: $1 (use --restore, --status, or no argument)" ;;

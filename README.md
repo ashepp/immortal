@@ -20,10 +20,19 @@ Package: `com.immortal.launcher` · Target: Meta Portal (Android 10 / API 29, ar
   exit. The image source is pluggable (keyless Lorem Picsum by default, Unsplash-ready); weather
   is keyless Open-Meteo + IP geolocation.
 - **App Store** (`StoreActivity` / `StoreCatalog`) — renders a hosted JSON catalog
-  ([`catalog.json`](catalog.json)) by category and installs apps via `PackageInstaller`. F-Droid
-  entries resolve the current APK at install time so the catalog never goes stale; your own apps
-  use a direct `apkUrl`. **The store is open to community submissions** — built a Portal app?
+  ([`catalog.json`](catalog.json)) by category and installs apps. F-Droid entries resolve the
+  current APK at install time so the catalog never goes stale; your own apps use a direct
+  `apkUrl`. **The store is open to community submissions** — built a Portal app?
   [Get it listed](SUBMISSIONS.md).
+- **Universal installer** — on the Gen-1 Portal+ (Android 9) the *built-in* Android installer
+  dialog is broken (renders with no buttons), so sideloading normally fails. Immortal ships a
+  shell-privileged silent-install daemon (started by the kit) that fixes this for the whole
+  device: the store and self-update use it, an **"Install with Immortal"** handler
+  (`ApkInstallActivity`) catches any APK you open from Chrome, a file manager, or a third-party
+  store like Aurora (set its installer to "Session/Native"), and an **"Install an APK"** browser
+  (`ApkBrowserActivity`) lists APKs in your Downloads. Apps that speak the Shizuku API are
+  supported too — `provision.sh --shizuku` starts Shizuku's server. Newer Portals have a working
+  installer and don't need the daemon.
 - **Self-update** (`UpdateManager`) — Immortal polls [`version.json`](version.json); when it
   advertises a higher `versionCode`, it downloads and installs the new build over itself. No
   cable, no laptop.
