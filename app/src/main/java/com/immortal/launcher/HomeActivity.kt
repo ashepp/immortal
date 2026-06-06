@@ -460,7 +460,6 @@ private fun LauncherScreen(
           // only regular apps get a delete badge and become draggable.
           item { PortalHomeTile(onExitHome) }
           item { StoreTile(onOpenStore) }
-          item { HelpTile(onOpenHelp) }
           items(folderNames, key = { it }) { name ->
             FolderTile(
                 name = name,
@@ -557,6 +556,10 @@ private fun LauncherScreen(
                             context.startActivity(
                                 Intent(context, ScreensaverSettingsActivity::class.java))
                           }
+                        },
+                        FolderExtra("Help", ICON_HELP) {
+                          openFolder = null
+                          onOpenHelp()
                         })
                 else emptyList(),
         )
@@ -1185,16 +1188,6 @@ private fun StoreTile(onClick: () -> Unit) {
       label = "App Store",
       background = Color(0xFF2D6CDF),
       glyph = ICON_DOWNLOAD,
-      onClick = onClick,
-  )
-}
-
-@Composable
-private fun HelpTile(onClick: () -> Unit) {
-  BuiltInTile(
-      label = "Help",
-      background = Color(0xFF5A6470),
-      glyph = ICON_HELP,
       onClick = onClick,
   )
 }
