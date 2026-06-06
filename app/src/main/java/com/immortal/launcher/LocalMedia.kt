@@ -15,6 +15,17 @@ data class MediaItem(val path: String, val isVideo: Boolean)
 /** A pickable storage location (internal, SD, or a USB-C drive). */
 data class StorageRoot(val label: String, val path: String)
 
+/** A quick count + a few example items for previewing a folder in the picker. */
+data class MediaSummary(
+    val photos: Int,
+    val videos: Int,
+    val capped: Boolean,
+    val samples: List<MediaItem>,
+) {
+  val total: Int
+    get() = photos + videos
+}
+
 /**
  * Enumerates photos/videos under a folder the user picked. The Portal has no
  * system document picker, so this works on plain file paths (the app opts into
@@ -82,6 +93,55 @@ object LocalMedia {
       }
     }
     return out
+  }
+
+  /**
+   * Recursively count photos/videos under [path] and grab the first few as preview
+   * samples — for the folder picker. Bounded by [maxCount] and [maxScan] so a huge
+   * tree can't stall browsing; when hit, [MediaSummary.capped] is true (show "N+").
+   */
+  fun summarize(
+      path: String,
+      maxCount: Int = 600,
+      maxScan: Int = 4000,
+      sampleCount: Int = 3,
+  ): MediaSummary {
+    var photos = 0
+    var videos = 0
+    var capped = false
+    var scanned = 0
+    val samples = ArrayList<MediaItem>()
+    val root = runCatching { File(path) }.getOrNull()
+    if (root == null || !root.isDirectory) return MediaSummary(0, 0, false, emptyList())
+    val stack = ArrayDeque<File>()
+    stack.addLast(root)
+    loop@ while (stack.isNotEmpty()) {
+      val dir = stack.removeLast()
+      val children = runCatching { dir.listFiles() }.getOrNull() ?: continue
+      for (f in children) {
+        if (f.isDirectory) {
+          if (!f.name.startsWith(".")) stack.addLast(f)
+          continue
+        }
+        when (classify(f.name)) {
+          Kind.IMAGE -> {
+            photos++
+            if (samples.size < sampleCount) samples.add(MediaItem(f.absolutePath, false))
+          }
+          Kind.VIDEO -> {
+            videos++
+            if (samples.size < sampleCount) samples.add(MediaItem(f.absolutePath, true))
+          }
+          Kind.OTHER -> {}
+        }
+        scanned++
+        if (photos + videos >= maxCount || scanned >= maxScan) {
+          capped = true
+          break@loop
+        }
+      }
+    }
+    return MediaSummary(photos, videos, capped, samples)
   }
 
   /**

@@ -7,10 +7,34 @@
 
 package com.immortal.launcher
 
+import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LocalMediaTest {
+
+  @Test
+  fun summarize_countsRecursivelyWithSamples() {
+    val tmp = File(System.getProperty("java.io.tmpdir"), "imm-sum-${System.nanoTime()}")
+    try {
+      File(tmp, "sub").mkdirs()
+      File(tmp, "a.jpg").writeText("x")
+      File(tmp, "b.png").writeText("x")
+      File(tmp, "notes.txt").writeText("x")
+      File(tmp, "sub/d.mp4").writeText("x")
+      File(tmp, "sub/e.jpeg").writeText("x")
+      val s = LocalMedia.summarize(tmp.absolutePath)
+      assertEquals(3, s.photos) // a.jpg, b.png, e.jpeg
+      assertEquals(1, s.videos) // d.mp4
+      assertEquals(4, s.total)
+      assertFalse(s.capped)
+      assertTrue(s.samples.isNotEmpty())
+    } finally {
+      tmp.deleteRecursively()
+    }
+  }
 
   @Test
   fun classify_byExtension_caseInsensitive() {

@@ -9,12 +9,14 @@ package com.immortal.launcher
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,11 +37,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,12 +54,15 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.immortal.launcher.ui.theme.SampleAppTheme
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * A minimal folder browser — the Portal has no system document picker, so we
- * provide our own. Lists internal storage plus any mounted SD/USB volumes, lets the
- * user drill into a folder, and saves it as the screensaver source. Uses direct
- * file access (legacy storage + READ_EXTERNAL_STORAGE), so it reaches USB-C drives.
+ * provide our own. Lists internal storage plus any mounted SD/USB volumes, shows a
+ * photo/video count and a few thumbnails per folder, lets the user drill in, and
+ * saves the chosen folder as the screensaver source. Uses direct file access
+ * (legacy storage + READ_EXTERNAL_STORAGE), so it reaches USB-C drives.
  */
 class FolderPickerActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,7 +99,8 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
   // null = showing the list of storage volumes; otherwise the folder we're inside.
   var current by remember { mutableStateOf<File?>(null) }
 
-  fun up(): File? = current?.let { if (roots.any { r -> r.path == it.absolutePath }) null else it.parentFile }
+  fun up(): File? =
+      current?.let { if (roots.any { r -> r.path == it.absolutePath }) null else it.parentFile }
 
   BackHandler { if (current == null) onCancel() else current = up() }
 
@@ -108,7 +118,9 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
 
   Column(
       modifier =
-          Modifier.fillMaxSize().background(Color(0xFF101012)).padding(horizontal = 28.dp, vertical = 28.dp),
+          Modifier.fillMaxSize()
+              .background(Color(0xFF101012))
+              .padding(horizontal = 28.dp, vertical = 28.dp),
   ) {
     Text(
         if (current == null) "Choose a folder" else current!!.absolutePath,
@@ -117,7 +129,7 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
         fontWeight = FontWeight.SemiBold,
         maxLines = 2,
     )
-    Spacer(Modifier.size(18.dp))
+    Spacer(Modifier.size(14.dp))
 
     if (!granted) {
       Text(
@@ -126,14 +138,20 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
           fontSize = 15.sp,
       )
       Spacer(Modifier.size(16.dp))
-      PrimaryButton("Allow access") {
+      PrimaryButton("Allow access", null) {
         permLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
       }
       return@Column
     }
 
     if (current != null) {
-      PrimaryButton("Use this folder") { onPick(current!!.absolutePath) }
+      val summary by
+          produceState<MediaSummary?>(initialValue = null, current!!.absolutePath) {
+            value = withContext(Dispatchers.IO) { LocalMedia.summarize(current!!.absolutePath) }
+          }
+      PrimaryButton("Use this folder", summaryLine(summary, here = true)) {
+        onPick(current!!.absolutePath)
+      }
       Spacer(Modifier.size(14.dp))
     }
 
@@ -143,16 +161,17 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
           item { Hint("No storage found. If you plugged in a USB drive, give it a moment.") }
         }
         items(roots) { root ->
-          PickerRow(icon = "🖴", title = root.label, subtitle = root.path) { current = File(root.path) }
+          SimpleRow(icon = "🖴", title = root.label, subtitle = root.path) {
+            current = File(root.path)
+          }
         }
       } else {
-        item { PickerRow(icon = "↑", title = "Up one level", subtitle = "") { current = up() } }
+        item { SimpleRow(icon = "↑", title = "Up one level", subtitle = "") { current = up() } }
         if (subdirs.isEmpty()) {
-          item { Hint("No subfolders here. Tap \"Use this folder\" to use it.") }
+          item { Hint("No subfolders here. The photos and videos in this folder are shown below.") }
         }
-        items(subdirs) { dir ->
-          PickerRow(icon = "📁", title = dir.name, subtitle = "") { current = dir }
-        }
+        items(subdirs) { dir -> FolderRow(dir) { current = dir } }
+        item { CurrentFolderPreview(current!!) }
       }
     }
 
@@ -166,40 +185,130 @@ private fun FolderPicker(onPick: (String) -> Unit, onCancel: () -> Unit) {
   }
 }
 
+/** Counts + thumbnails are loaded in the background per folder. */
 @Composable
-private fun PrimaryButton(label: String, onClick: () -> Unit) {
+private fun FolderRow(dir: File, onClick: () -> Unit) {
+  val summary by
+      produceState<MediaSummary?>(initialValue = null, dir.absolutePath) {
+        value = withContext(Dispatchers.IO) { LocalMedia.summarize(dir.absolutePath) }
+      }
+  Row(
+      modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+  ) {
+    IconBox("📁")
+    Column(modifier = Modifier.weight(1f)) {
+      Text(dir.name, color = Color.White, fontSize = 17.sp, maxLines = 1)
+      Text(summaryLine(summary), color = Color(0xFF8A8A8A), fontSize = 12.sp)
+    }
+    summary?.samples?.let { samples ->
+      Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        samples.take(3).forEach { Thumb(it) }
+      }
+    }
+  }
+}
+
+@Composable
+private fun Thumb(item: MediaItem, sizeDp: Int = 44) {
+  val bmp by
+      produceState<Bitmap?>(initialValue = null, item.path) {
+        value = withContext(Dispatchers.IO) { Thumbnails.get(item, 160) }
+      }
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier =
+          Modifier.size(sizeDp.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF2A2A2C)),
+  ) {
+    bmp?.let {
+      Image(
+          bitmap = it.asImageBitmap(),
+          contentDescription = null,
+          contentScale = ContentScale.Crop,
+          modifier = Modifier.fillMaxSize(),
+      )
+    }
+    if (item.isVideo) Text("▶", color = Color.White, fontSize = (sizeDp / 3).sp)
+  }
+}
+
+/** A grid of thumbnails of the media directly in the folder you're viewing, so you
+ * can see what you'd be using before tapping "Use this folder". */
+@Composable
+private fun CurrentFolderPreview(dir: File) {
+  val media by
+      produceState<List<MediaItem>?>(initialValue = null, dir.absolutePath) {
+        value = withContext(Dispatchers.IO) { LocalMedia.enumerate(dir.absolutePath, true, 24) }
+      }
+  val list = media ?: return
+  if (list.isEmpty()) return
+  Column(modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
+    Text(
+        "IN THIS FOLDER",
+        color = Color(0xFF7C7C7C),
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(bottom = 12.dp),
+    )
+    list.chunked(6).forEach { rowItems ->
+      Row(
+          horizontalArrangement = Arrangement.spacedBy(10.dp),
+          modifier = Modifier.padding(bottom = 10.dp),
+      ) {
+        rowItems.forEach { Thumb(it, sizeDp = 76) }
+      }
+    }
+  }
+}
+
+private fun summaryLine(s: MediaSummary?, here: Boolean = false): String {
+  if (s == null) return if (here) "Counting…" else "Scanning…"
+  if (s.total == 0) return if (here) "No photos or videos in this folder" else "No photos or videos"
+  val plus = if (s.capped) "+" else ""
+  val parts = ArrayList<String>()
+  if (s.photos > 0) parts.add("${s.photos}$plus photo${if (s.photos == 1 && !s.capped) "" else "s"}")
+  if (s.videos > 0) parts.add("${s.videos}$plus video${if (s.videos == 1 && !s.capped) "" else "s"}")
+  return parts.joinToString(" · ")
+}
+
+@Composable
+private fun IconBox(icon: String) {
+  Box(
+      contentAlignment = Alignment.Center,
+      modifier = Modifier.size(40.dp).background(Color(0xFF2A2A2C), RoundedCornerShape(10.dp)),
+  ) {
+    Text(icon, fontSize = 18.sp)
+  }
+}
+
+@Composable
+private fun PrimaryButton(label: String, subtitle: String?, onClick: () -> Unit) {
   Surface(
       color = Color(0xFF2E6BE6),
       shape = RoundedCornerShape(14.dp),
       modifier = Modifier.fillMaxWidth().clickable { onClick() },
   ) {
-    Text(
-        label,
-        color = Color.White,
-        fontSize = 17.sp,
-        fontWeight = FontWeight.SemiBold,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth(),
-    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.padding(vertical = 13.dp).fillMaxWidth(),
+    ) {
+      Text(label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+      if (subtitle != null) {
+        Text(subtitle, color = Color(0xCCFFFFFF), fontSize = 12.sp, textAlign = TextAlign.Center)
+      }
+    }
   }
 }
 
 @Composable
-private fun PickerRow(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
+private fun SimpleRow(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
   Row(
-      modifier =
-          Modifier.fillMaxWidth()
-              .clickable { onClick() }
-              .padding(vertical = 6.dp),
+      modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(14.dp),
   ) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier.size(40.dp).background(Color(0xFF2A2A2C), RoundedCornerShape(10.dp)),
-    ) {
-      Text(icon, fontSize = 18.sp)
-    }
+    IconBox(icon)
     Column {
       Text(title, color = Color.White, fontSize = 17.sp)
       if (subtitle.isNotBlank()) {
@@ -211,5 +320,10 @@ private fun PickerRow(icon: String, title: String, subtitle: String, onClick: ()
 
 @Composable
 private fun Hint(text: String) {
-  Text(text, color = Color(0xFF7C7C7C), fontSize = 14.sp, modifier = Modifier.padding(vertical = 14.dp))
+  Text(
+      text,
+      color = Color(0xFF7C7C7C),
+      fontSize = 14.sp,
+      modifier = Modifier.padding(vertical = 14.dp),
+  )
 }
