@@ -17,6 +17,16 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
+# Stock Windows PowerShell 5.1 defaults to old TLS and an IE-based HTML parser,
+# both of which break HTTPS downloads from Google / GitHub / F-Droid (the kit
+# downloads platform-tools and APKs at runtime). Force TLS 1.2 and basic parsing
+# so the download steps work on a clean Windows machine.
+try {
+  [Net.ServicePointManager]::SecurityProtocol =
+      [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {}
+$PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
+
 function Step($m){ Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok($m){ Write-Host "  [ok] $m" -ForegroundColor Green }
 function Warn($m){ Write-Host "  [!] $m" -ForegroundColor Yellow }
@@ -39,7 +49,7 @@ function Resolve-Adb {
   if (Test-Path $bundled) { return $bundled }
   $onPath = (Get-Command adb -ErrorAction SilentlyContinue)
   if ($onPath) { return $onPath.Source }
-  Step "Android platform-tools (adb) not found — downloading the official package from Google"
+  Step "Android platform-tools (adb) not found - downloading the official package from Google"
   $url = "https://dl.google.com/android/repository/platform-tools-latest-windows.zip"
   $zip = Join-Path $ScriptDir "platform-tools.zip"
   Invoke-WebRequest -Uri $url -OutFile $zip
@@ -133,7 +143,7 @@ function Start-Shizuku {
   else { Warn "Shizuku didn't confirm startup - open the Shizuku app to check its status" }
 }
 function Install-Apps {
-  # Silent adb-install of configured apps — the reliable path on models whose
+  # Silent adb-install of configured apps - the reliable path on models whose
   # on-device installer dialog is broken (e.g. Gen-1 Portal+).
   $tmp = Split-Path -Parent $cfg["APK_GLOB"]; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   foreach ($spec in ($cfg["PREINSTALL_FDROID"] -split "\s+")) {
@@ -196,7 +206,7 @@ function Disable-Ota {
 function Disable-Presence {
   # OFF BY DEFAULT. The system uses presence to choose ambient vs sleep at the
   # screen timeout, and Immortal cooperates with it. Disable only if you want
-  # the camera never used at all. Reversible — restore re-enables it.
+  # the camera never used at all. Reversible - restore re-enables it.
   if ($cfg["DISABLE_PRESENCE"] -ne "true") { return }
   Step "Disabling Meta's presence detector (camera off; loses empty-room sleep smarts)"
   A shell pm disable-user --user 0 $cfg["PRESENCE_PKG"] | Out-Null
