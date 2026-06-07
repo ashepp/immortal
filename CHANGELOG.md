@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.25 (2026-06-06)
+
+Immortal settings — the first community-requested customizations.
+
+- New **Immortal** tile in the Settings folder: a settings screen for the launcher itself (remote-friendly, like the screensaver settings).
+- **Weather in °F or °C** — Auto follows your Portal's language & region; or pick one explicitly. The home-screen header updates the moment you go back.
+- **App icon size** — Standard (the original compact grid) or Large (5 columns of bigger tiles, closer to the stock Portal launcher).
+
 ## 1.24 (2026-06-06)
 
 Ship the dark-theme fix that landed in source after the 1.23 release was cut.

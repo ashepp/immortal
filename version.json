@@ -1,6 +1,6 @@
 {
-  "versionCode": 25,
-  "versionName": "1.24",
+  "versionCode": 26,
+  "versionName": "1.25",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Immortal 1.24 — dark window chrome: the status bar no longer flashes white while the app starts or when it briefly reappears on a swipe from the top. Purely cosmetic; no behaviour changes."
+  "notes": "Immortal 1.25 — new Immortal settings (find the tile in the Settings folder): choose °F or °C for the weather (or let it follow your Portal's region), and pick a larger app-icon size closer to the stock launcher. Also includes 1.24's fix for the status bar flashing white at startup."
 }
