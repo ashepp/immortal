@@ -127,6 +127,22 @@ installer (verified end-to-end on a Portal+ installing Spotify). Shizuku's serve
 own helper, doesn't survive a reboot; the kit restarts it on its next run, or run
 `./provision.sh --shizuku` (`provision.ps1 -Shizuku`).
 
+#### Simpler alternative: skip Shizuku
+
+Shizuku's server can fail to stay up on some Gen-1 firmware (Android 9 may kill it right after
+launch — the kit now detects this and tells you instead of falsely reporting success). If you'd
+rather not deal with Shizuku, there's a simpler path that a community tester confirmed works on a
+Gen-1 Portal+ (including split APKs): grant Aurora the install permission once over ADB, then use
+Aurora's **Session** installer.
+
+```bash
+adb shell appops set com.aurora.store REQUEST_INSTALL_PACKAGES allow
+```
+
+Then in **Aurora → Settings → Installation → Installation method**, choose **Session**. Aurora's
+install then routes through Immortal's own silent-install daemon — no Shizuku, no broken dialog.
+(Like every non-root helper, the daemon is restarted by the kit after a reboot.)
+
 ## Releasing
 
 Hosted from this repo:
