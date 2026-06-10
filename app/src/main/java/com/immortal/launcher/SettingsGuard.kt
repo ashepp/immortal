@@ -19,14 +19,36 @@ import android.provider.Settings
  * `pm grant` — without it this is a silent no-op (settings stay as provisioned).
  *
  * Note: the *home* role can't be reasserted this way (it isn't a secure setting
- * and needs system privilege); provisioning hardens that separately by disabling
- * the stock launcher's home activity.
+ * and needs system privilege); provisioning sets it separately via
+ * `cmd package set-home-activity`. The stock launcher stays enabled and remains
+ * explicitly launchable — that's what the Calls tile bridges to.
  */
 object SettingsGuard {
+
+  /**
+   * Directly turn the system Dream on/off. Used to keep the screen dark after an
+   * idle/overnight sleep — otherwise a docked Portal immediately re-dreams the
+   * screensaver and re-lights the screen. [reaffirmScreensaver] (run on the next
+   * return to Immortal's home) puts it back per the user's setting.
+   */
+  fun setSystemScreensaverEnabled(context: Context, on: Boolean) {
+    runCatching {
+      Settings.Secure.putInt(context.contentResolver, "screensaver_enabled", if (on) 1 else 0)
+    }
+  }
 
   fun reaffirmScreensaver(context: Context) {
     runCatching {
       val resolver = context.contentResolver
+      // User turned Immortal's screensaver OFF (Screensaver settings): stop hijacking
+      // the system Dream and turn it off, so the Portal can sleep on its screen-off
+      // timer and the user can run their own setup. We mirror our normal "force on"
+      // behaviour as a "force off" so a stray re-enable can't bring it back — which
+      // is exactly the "I disable it and it comes back" complaint.
+      if (!ScreensaverConfig.load(context).enabled || SleepScheduler.isOvernightNow(context)) {
+        Settings.Secure.putInt(resolver, "screensaver_enabled", 0)
+        return@runCatching
+      }
       val ours = ComponentName(context, PhotoDreamService::class.java).flattenToShortString()
       if (Settings.Secure.getString(resolver, "screensaver_components") != ours) {
         Settings.Secure.putString(resolver, "screensaver_components", ours)
@@ -35,6 +57,24 @@ object SettingsGuard {
         Settings.Secure.putString(resolver, "screensaver_default_component", ours)
       }
       Settings.Secure.putInt(resolver, "screensaver_enabled", 1)
+    }
+  }
+
+  /**
+   * Re-enables ADB after boot. The vendor init script
+   * (`init.common.usb.rc`) kills adbd on every boot for omni_prod-user
+   * builds when `ro.boot.force_enable_usb_adb=0`. Writing `adb_enabled=1`
+   * to Settings.Global triggers UsbDeviceManager to reconfigure the USB
+   * gadget and restart adbd, restoring connectivity.
+   *
+   * Also re-enables developer settings so the toggle stays visible in
+   * Android Settings as a fallback.
+   */
+  fun reaffirmAdb(context: Context) {
+    runCatching {
+      val resolver = context.contentResolver
+      Settings.Global.putInt(resolver, "adb_enabled", 1)
+      Settings.Global.putInt(resolver, "development_settings_enabled", 1)
     }
   }
 

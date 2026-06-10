@@ -43,11 +43,19 @@ class PhotoFramePreviewActivity : ComponentActivity() {
       hide(WindowInsetsCompat.Type.systemBars())
       systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     }
+    // Inside the overnight window the screen should stay off — don't show photos.
+    if (SleepScheduler.isOvernightNow(this)) {
+      ScreenControl.sleep(this)
+      finish()
+      return
+    }
     applyKeepScreenOn()
     frame = PhotoFrameController(this)
     frame.onExit = { finish() }
     setContentView(frame.view)
     frame.start()
+    // A screensaver session is running: start (or keep) the idle screen-off countdown.
+    SleepScheduler.armIdle(this)
 
     if (DreamPolicy.hasBattery(this)) {
       powerReceiver =
@@ -66,10 +74,11 @@ class PhotoFramePreviewActivity : ComponentActivity() {
   }
 
   private fun applyKeepScreenOn() {
+    val cfg = ScreensaverConfig.load(this)
     val keep =
         DreamPolicy.holdScreenOn(
             hasBattery = DreamPolicy.hasBattery(this),
-            batterySaver = ScreensaverConfig.load(this).batterySaver,
+            batterySaver = cfg.batterySaver,
             powered = DreamPolicy.isPowered(this),
         )
     if (keep) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

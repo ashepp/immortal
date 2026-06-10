@@ -11,6 +11,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -187,7 +188,14 @@ class HomeActivity : ComponentActivity() {
   // settings, put them back every time Immortal comes to the foreground.
   override fun onResume() {
     super.onResume()
+    // The user is back on Immortal, so any stock-launcher call handoff is over:
+    // allow the photo frame to resume its normal screensaver behaviour.
+    DreamPolicy.inStockHandoff = false
     SettingsGuard.reaffirmScreensaver(this)
+    // Back on the launcher: the idle screen-off session is over.
+    SleepScheduler.cancelIdle(this)
+    // If a stray wake landed us here inside the overnight window, go back to sleep.
+    if (SleepScheduler.isOvernightNow(this)) ScreenControl.sleep(this)
   }
 
   private fun enterImmersive() {
@@ -200,42 +208,43 @@ class HomeActivity : ComponentActivity() {
 
   /**
    * The "Calls" tile bridges to the STOCK Portal home — the only caller Meta trusts
-   * to launch Contacts/calling/camera. We try the touchscreen Portals' launcher
-   * first (the verified host on those models); if it isn't present (e.g. the Portal
-   * TV, which uses a different "ripleyhome" launcher), we fall back to whatever stock
-   * HOME activity this device actually has, so the bridge works on any Portal.
+   * to launch Contacts/calling/camera.
    *
-   * Note: the Contacts app (com.facebook.alohaapps.contacts) exposes a LAUNCHER
-   * activity but enforces a trusted-caller check at the app level — it can only be
-   * opened from approved sources (the stock launcher, or the internal debug launcher
-   * in the settings app). Immortal is not approved, so we must route through the
-   * stock home rather than launching contacts directly.
-   *
-   * Cold start bounces back here while the task spins up, so we fire twice: the
-   * first creates the task, the second (after a beat) brings it forward to stay.
+   * Why a deep link and not a plain HOME launch: the Contacts app
+   * (com.facebook.alohaapps.contacts) enforces a signature-based trusted-caller
+   * check (Meta's com.facebook.secure framework) that Immortal can never satisfy,
+   * so we must route through the trusted stock launcher. A plain MAIN/HOME launch
+   * cold-starts the stock launcher into its idle "dream" face, whose
+   * DREAMING_STOPPED then makes our own screensaver relaunch over the top and trap
+   * the user (the reported "Calls kicks me back into Immortal"). The stock
+   * launcher's `portal://launcher/home` VIEW deep link instead resumes its
+   * interactive Home tab directly — the Contacts/Favorites calling surface — and we
+   * mark a bridge in flight so [DreamPolicy] doesn't claw the frame back during the
+   * transition.
    */
   private fun launchStockHome() {
-    fun fire(component: ComponentName): Boolean =
+    // Suppress the screensaver-relaunch race while the stock home comes forward, and
+    // keep suppressing the holding-frame relaunch until the user returns to Immortal
+    // (cleared in onResume) so the frame can't slam over an in-progress call.
+    DreamPolicy.bridgeAt = System.currentTimeMillis()
+    DreamPolicy.inStockHandoff = true
+
+    fun fire(intent: Intent): Boolean =
         runCatching {
-              val intent =
-                  Intent(Intent.ACTION_MAIN)
-                      .addCategory(Intent.CATEGORY_LAUNCHER)
-                      .setComponent(component)
-                      .addFlags(
-                          Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-              startActivity(intent)
-              window.decorView.postDelayed({ runCatching { startActivity(intent) } }, 600)
+              startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+              true
             }
-            .isSuccess
+            .getOrDefault(false)
 
-    // 1) Touchscreen Portals' stock launcher (the Contacts/calling host).
-    val touch =
-        ComponentName(
-            "com.facebook.alohaapps.launcher", "com.facebook.aloha.app.home.touch.HomeActivity")
-    if (fire(touch)) return
+    // 1) Deep-link straight to the touchscreen stock launcher's Home tab.
+    val deepLink =
+        Intent(Intent.ACTION_VIEW, Uri.parse("portal://launcher/home"))
+            .setPackage("com.facebook.alohaapps.launcher")
+    if (fire(deepLink)) return
 
-    // 2) Fallback: this device's real stock HOME (e.g. the Portal TV's ripleyhome),
-    //    excluding ourselves and the system fallback homes.
+    // 2) Fallback for models without the portal:// deep link (e.g. the Portal TV's
+    //    ripleyhome): this device's real stock HOME, excluding ourselves and the
+    //    system fallback homes.
     val stock =
         packageManager
             .queryIntentActivities(
@@ -247,7 +256,12 @@ class HomeActivity : ComponentActivity() {
                   it.packageName != "com.android.tv.settings" &&
                   !it.name.contains("FallbackHome", ignoreCase = true)
             }
-    if (stock != null) fire(ComponentName(stock.packageName, stock.name))
+    if (stock != null) {
+      fire(
+          Intent(Intent.ACTION_MAIN)
+              .addCategory(Intent.CATEGORY_LAUNCHER)
+              .setComponent(ComponentName(stock.packageName, stock.name)))
+    }
   }
 }
 

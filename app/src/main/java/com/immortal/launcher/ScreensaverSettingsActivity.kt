@@ -147,8 +147,26 @@ private fun ScreensaverSettingsScreen() {
       )
       Spacer(Modifier.size(26.dp))
 
-      SectionLabel("Source")
       Card {
+        ToggleRow("Show the photo-frame screensaver", settings.enabled) {
+          ScreensaverConfig.setEnabled(context, it)
+          SettingsGuard.reaffirmScreensaver(context)
+          settings = settings.copy(enabled = it)
+        }
+      }
+      Text(
+          "Turn this off to let your Portal's screen turn off on its own timer (or to use " +
+              "your own screensaver). Immortal won't switch it back on.",
+          color = Color(0xFF7C7C7C),
+          fontSize = 13.sp,
+          modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+      )
+
+      if (settings.enabled) {
+        Spacer(Modifier.size(26.dp))
+
+        SectionLabel("Source")
+        Card {
         SelectableRow(
             title = "Immortal photos",
             subtitle = "A calming built-in photo feed (no setup).",
@@ -223,12 +241,12 @@ private fun ScreensaverSettingsScreen() {
         }
       }
 
-      // Battery models only (Portal Go): choose between battery life and an
-      // always-on frame when unplugged.
-      if (remember { DreamPolicy.hasBattery(context) }) {
-        SectionLabel("Power")
-        Surface(color = Color(0xFF1C1C1E), shape = RoundedCornerShape(18.dp)) {
-          Column {
+      val hasBattery = remember { DreamPolicy.hasBattery(context) }
+      SectionLabel("Power")
+      Surface(color = Color(0xFF1C1C1E), shape = RoundedCornerShape(18.dp)) {
+        Column {
+          if (hasBattery) {
+            // Battery models (Portal Go): battery life vs always-on frame unplugged.
             ToggleRow("Sleep on battery when nobody's around", settings.batterySaver) {
               ScreensaverConfig.setBatterySaver(context, it)
               settings = settings.copy(batterySaver = it)
@@ -236,13 +254,65 @@ private fun ScreensaverSettingsScreen() {
             Text(
                 "On: unplugged, the Portal keeps showing photos while someone is nearby " +
                     "and goes to sleep when the room is empty (saves the battery). " +
-                    "Off: the photo frame stays on battery too. While charging, the " +
-                    "frame always runs.",
+                    "Off: the photo frame stays on battery too.",
                 fontSize = 13.sp,
                 color = Color(0xFF9A9A9A),
                 modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp),
             )
+            Divider()
           }
+
+          // Idle screen-off (all models). Off by default.
+          ToggleRow("Turn the screen off after a while", settings.idleSleepOn) {
+            val v = if (it) 30 else 0
+            ScreensaverConfig.setIdleSleepMin(context, v)
+            settings = settings.copy(idleSleepMin = v)
+          }
+          if (settings.idleSleepOn) {
+            Divider()
+            MinuteStepper(settings.idleSleepMin) { v ->
+              val c = ScreensaverConfig.clampIdle(v)
+              ScreensaverConfig.setIdleSleepMin(context, c)
+              settings = settings.copy(idleSleepMin = c)
+            }
+          }
+          Text(
+              "After the screensaver has shown this long with no touch, the screen turns " +
+                  "off; tap to wake it. This is a simple timer — the Portal can't tell us " +
+                  "whether someone's in the room.",
+              fontSize = 13.sp,
+              color = Color(0xFF9A9A9A),
+              modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
+          )
+
+          Divider()
+
+          // Overnight window (all models). Off by default.
+          ToggleRow("Overnight sleep", settings.overnightEnabled) {
+            ScreensaverConfig.setOvernightEnabled(context, it)
+            settings = settings.copy(overnightEnabled = it)
+            SleepScheduler.applyOvernightNow(context)
+          }
+          if (settings.overnightEnabled) {
+            Divider()
+            TimeStepper("From", settings.overnightStartMin) { v ->
+              ScreensaverConfig.setOvernightStartMin(context, v)
+              settings = settings.copy(overnightStartMin = ScreensaverConfig.wrapMinuteOfDay(v))
+              SleepScheduler.applyOvernightNow(context)
+            }
+            Divider()
+            TimeStepper("Until", settings.overnightEndMin) { v ->
+              ScreensaverConfig.setOvernightEndMin(context, v)
+              settings = settings.copy(overnightEndMin = ScreensaverConfig.wrapMinuteOfDay(v))
+              SleepScheduler.applyOvernightNow(context)
+            }
+          }
+          Text(
+              "Keeps the screen off between these times every night.",
+              fontSize = 13.sp,
+              color = Color(0xFF9A9A9A),
+              modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 4.dp, bottom = 14.dp),
+          )
         }
       }
 
@@ -264,6 +334,7 @@ private fun ScreensaverSettingsScreen() {
             modifier = Modifier.padding(vertical = 16.dp).fillMaxWidth(),
         )
       }
+      } // end if (settings.enabled)
     }
   }
 }
@@ -406,6 +477,83 @@ private fun ArrowButton(glyph: String, rowFocused: Boolean, onClick: () -> Unit)
         fontWeight = FontWeight.SemiBold,
     )
   }
+}
+
+/** Remote-friendly minute stepper for the idle screen-off timeout (5-min steps). */
+@Composable
+private fun MinuteStepper(minutes: Int, onChange: (Int) -> Unit) {
+  val src = remember { MutableInteractionSource() }
+  val focused by src.collectIsFocusedAsState()
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .onKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) {
+                  when (e.key) {
+                    Key.DirectionLeft -> { onChange(minutes - 5); true }
+                    Key.DirectionRight -> { onChange(minutes + 5); true }
+                    else -> false
+                  }
+                } else false
+              }
+              .focusable(interactionSource = src)
+              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
+              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text("Turn off after", color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+    ArrowButton("◀", focused) { onChange(minutes - 5) }
+    Text(
+        "${minutes}m",
+        color = if (focused) Color.White else Color(0xFFDDDDDD),
+        fontSize = 17.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.widthIn(min = 64.dp),
+    )
+    ArrowButton("▶", focused) { onChange(minutes + 5) }
+  }
+}
+
+/** Remote-friendly time-of-day stepper for the overnight window (15-min steps). */
+@Composable
+private fun TimeStepper(label: String, minuteOfDay: Int, onChange: (Int) -> Unit) {
+  val src = remember { MutableInteractionSource() }
+  val focused by src.collectIsFocusedAsState()
+  Row(
+      modifier =
+          Modifier.fillMaxWidth()
+              .onKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) {
+                  when (e.key) {
+                    Key.DirectionLeft -> { onChange(minuteOfDay - 15); true }
+                    Key.DirectionRight -> { onChange(minuteOfDay + 15); true }
+                    else -> false
+                  }
+                } else false
+              }
+              .focusable(interactionSource = src)
+              .background(if (focused) Color(0x402E6BE6) else Color.Transparent)
+              .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+      verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(label, color = Color.White, fontSize = 17.sp, modifier = Modifier.weight(1f))
+    ArrowButton("◀", focused) { onChange(minuteOfDay - 15) }
+    Text(
+        formatMinuteOfDay(minuteOfDay),
+        color = if (focused) Color.White else Color(0xFFDDDDDD),
+        fontSize = 17.sp,
+        fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.widthIn(min = 80.dp),
+    )
+    ArrowButton("▶", focused) { onChange(minuteOfDay + 15) }
+  }
+}
+
+private fun formatMinuteOfDay(min: Int): String {
+  val m = ((min % 1440) + 1440) % 1440
+  return "%02d:%02d".format(m / 60, m % 60)
 }
 
 @Composable

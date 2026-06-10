@@ -36,6 +36,23 @@ class DreamPolicyTest {
   }
 
   @Test
+  fun bridgeInFlight_suppressesRelaunch() {
+    // Tapping "Calls" cold-starts the stock launcher, whose idle dream stops and
+    // fires DREAMING_STOPPED. While the bridge is in flight we must NOT relaunch
+    // the frame over the stock home (the reported "Calls kicks me back").
+    assertTrue(DreamPolicy.bridging(bridgeAgoMs = 0))
+    assertTrue(DreamPolicy.bridging(bridgeAgoMs = 3_000))
+  }
+
+  @Test
+  fun afterBridgeGrace_relaunchResumes() {
+    // Long after a bridge, normal screensaver behavior is back.
+    assertFalse(DreamPolicy.bridging(bridgeAgoMs = 30_000))
+    // A stale/never-set bridge timestamp (huge elapsed) must not suppress.
+    assertFalse(DreamPolicy.bridging(bridgeAgoMs = Long.MAX_VALUE))
+  }
+
+  @Test
   fun mainsPoweredPortals_holdTheScreen() {
     // No battery (Portal+, Mini, gen-2, TV): permanent frame, saver irrelevant.
     assertTrue(DreamPolicy.holdScreenOn(hasBattery = false, batterySaver = true, powered = false))

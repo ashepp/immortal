@@ -330,6 +330,10 @@ grant_perms() {
   # app is in the foreground. SYSTEM_ALERT_WINDOW holders may start activities
   # from the background on Android 10.
   a shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow >/dev/null 2>&1
+  # Device admin (force-lock only): lets Immortal turn the screen off for its idle
+  # and overnight sleep features via lockNow(). Harmless if it can't be set.
+  a shell dpm set-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 \
+    && ok "Screen-off (device admin) enabled" || true
   ok "Permissions granted"
 }
 
@@ -508,6 +512,8 @@ do_restore() {
   for p in $OTA_PACKAGES; do a shell pm enable "$p" >/dev/null 2>&1; done; ok "OS updates restored"
   step "Re-enabling Meta's presence detector"
   a shell pm enable "$PRESENCE_PKG" >/dev/null 2>&1; ok "Presence detector restored"
+  step "Removing Immortal's screen-off device admin"
+  a shell dpm remove-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 || true; ok "Device admin removed"
   step "Restoring stock launcher"
   a shell cmd package set-home-activity "$STOCK_HOME" >/dev/null 2>&1; ok "Home restored ($STOCK_HOME)"
   step "Restoring stock screensaver"

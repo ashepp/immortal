@@ -31,5 +31,8 @@ class ImmortalApp : Application() {
           }
         }
     registerReceiver(receiver, IntentFilter(Intent.ACTION_DREAMING_STOPPED))
+
+    // Arm the overnight screen-off window (and apply it if we're inside it now).
+    SleepScheduler.applyOvernightNow(this)
   }
 }

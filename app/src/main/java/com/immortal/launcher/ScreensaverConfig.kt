@@ -29,6 +29,10 @@ object ScreensaverConfig {
   const val DEFAULT_INTERVAL = 30
 
   data class Settings(
+      // Master on/off for Immortal's photo-frame screensaver. When off, Immortal
+      // stops asserting itself as the system Dream and lets the Portal sleep / lets
+      // the user run their own screensaver (e.g. Home Assistant + Immich frame).
+      val enabled: Boolean = true,
       val source: String = SOURCE_DEFAULT,
       val folderPath: String? = null,
       val fit: String = FIT_FILL,
@@ -38,7 +42,18 @@ object ScreensaverConfig {
       // Battery models (Portal Go) only: pause the screensaver while unplugged so
       // the device can actually sleep, instead of showing photos until empty.
       val batterySaver: Boolean = true,
+      // Idle screen-off (off by default): minutes the screensaver runs before the
+      // screen turns off. 0 = never (Immortal's always-on photo frame).
+      val idleSleepMin: Int = 0,
+      // Overnight screen-off (off by default): keep the screen off between two times
+      // each night. Times are minutes-from-midnight (e.g. 22:00 = 1320).
+      val overnightEnabled: Boolean = false,
+      val overnightStartMin: Int = 22 * 60,
+      val overnightEndMin: Int = 7 * 60,
   ) {
+    /** True when the idle screen-off timeout is active. */
+    val idleSleepOn: Boolean
+      get() = idleSleepMin > 0
     /** True when the user has chosen a local folder for us to read. */
     val usesFolder: Boolean
       get() = source == SOURCE_FOLDER && !folderPath.isNullOrBlank()
@@ -52,6 +67,7 @@ object ScreensaverConfig {
   fun load(context: Context): Settings {
     val p = prefs(context)
     return Settings(
+        enabled = p.getBoolean("enabled", true),
         source = p.getString("source", SOURCE_DEFAULT) ?: SOURCE_DEFAULT,
         folderPath = p.getString("folder_path", null),
         fit = p.getString("fit", FIT_FILL) ?: FIT_FILL,
@@ -59,8 +75,18 @@ object ScreensaverConfig {
         shuffle = p.getBoolean("shuffle", false),
         includeVideo = p.getBoolean("include_video", true),
         batterySaver = p.getBoolean("battery_saver", true),
+        idleSleepMin = p.getInt("idle_sleep_min", 0),
+        overnightEnabled = p.getBoolean("overnight_enabled", false),
+        overnightStartMin = p.getInt("overnight_start_min", 22 * 60),
+        overnightEndMin = p.getInt("overnight_end_min", 7 * 60),
     )
   }
+
+  /** Keep the idle timeout sane (0 = off, else 1…120 min). */
+  fun clampIdle(min: Int): Int = if (min <= 0) 0 else min.coerceIn(1, 120)
+
+  /** Minutes-from-midnight wrapped into 0…1439. */
+  fun wrapMinuteOfDay(min: Int): Int = ((min % 1440) + 1440) % 1440
 
   fun setFolder(c: Context, path: String) =
       prefs(c).edit().putString("folder_path", path).putString("source", SOURCE_FOLDER).apply()
@@ -79,4 +105,18 @@ object ScreensaverConfig {
 
   fun setBatterySaver(c: Context, on: Boolean) =
       prefs(c).edit().putBoolean("battery_saver", on).apply()
+
+  fun setEnabled(c: Context, on: Boolean) = prefs(c).edit().putBoolean("enabled", on).apply()
+
+  fun setIdleSleepMin(c: Context, min: Int) =
+      prefs(c).edit().putInt("idle_sleep_min", clampIdle(min)).apply()
+
+  fun setOvernightEnabled(c: Context, on: Boolean) =
+      prefs(c).edit().putBoolean("overnight_enabled", on).apply()
+
+  fun setOvernightStartMin(c: Context, min: Int) =
+      prefs(c).edit().putInt("overnight_start_min", wrapMinuteOfDay(min)).apply()
+
+  fun setOvernightEndMin(c: Context, min: Int) =
+      prefs(c).edit().putInt("overnight_end_min", wrapMinuteOfDay(min)).apply()
 }

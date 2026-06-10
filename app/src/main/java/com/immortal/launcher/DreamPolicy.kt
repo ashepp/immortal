@@ -41,6 +41,28 @@ object DreamPolicy {
   /** Set by [PhotoDreamService] just before finish() on a user tap. */
   @Volatile var userExitAt: Long = 0L
 
+  /**
+   * Set by [HomeActivity] when it deliberately bridges to the stock launcher (the
+   * Calls tile). The stock launcher cold-starts into its own idle "dream" face and
+   * immediately stops it, firing ACTION_DREAMING_STOPPED — which would otherwise
+   * make us relaunch our photo frame over the top of the stock home and trap the
+   * user there (the reported "Calls kicks me back into Immortal"). While a bridge
+   * is in flight we suppress that relaunch.
+   */
+  @Volatile var bridgeAt: Long = 0L
+
+  /**
+   * True from the moment the Calls tile bridges to the stock launcher until the
+   * user comes back to Immortal (cleared in [HomeActivity.onResume]). While set, we
+   * never relaunch the holding photo-frame Activity, so it can't slam over the stock
+   * home while the user is in a call flow. The system Dream still shows photos on
+   * idle as usual — we only skip the aggressive "permanent frame" relaunch.
+   */
+  @Volatile var inStockHandoff: Boolean = false
+
+  /** How long after a deliberate bridge we keep suppressing the frame relaunch. */
+  private const val BRIDGE_GRACE_MS = 8000L
+
   fun hasBattery(context: Context): Boolean =
       runCatching {
             context
@@ -61,6 +83,12 @@ object DreamPolicy {
    * Pure decision (unit-tested): should the frame hold the screen on?
    * Holding means a permanent frame; not holding hands control back to the
    * system's presence policy at every screen timeout.
+   *
+   * Note: presence-driven "sleep when the room's empty" is NOT achievable for us —
+   * that decision was made by Meta's SuperFrame, which Immortal replaces, and the
+   * presence signal is gated behind signature|privileged permissions we can't hold.
+   * Instead, [SleepScheduler] offers an idle timeout and an overnight window that
+   * turn the screen off via device-admin lockNow().
    */
   internal fun holdScreenOn(
       hasBattery: Boolean,
@@ -74,8 +102,19 @@ object DreamPolicy {
     return interactive // power button / real sleep — leave it be
   }
 
+  /** Pure decision (unit-tested): is a deliberate stock-home bridge still in flight? */
+  internal fun bridging(bridgeAgoMs: Long): Boolean = bridgeAgoMs in 0..BRIDGE_GRACE_MS
+
   /** Called on ACTION_DREAMING_STOPPED: continue the frame unless the user ended it. */
   fun onDreamingStopped(context: Context) {
+    if (!ScreensaverConfig.load(context).enabled) {
+      Log.i(TAG, "screensaver disabled; not relaunching frame")
+      return
+    }
+    if (inStockHandoff || bridging(System.currentTimeMillis() - bridgeAt)) {
+      Log.i(TAG, "stock-launcher handoff; suppressing frame relaunch")
+      return
+    }
     val pm = context.getSystemService(PowerManager::class.java)
     val relaunch =
         shouldRelaunch(

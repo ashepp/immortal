@@ -253,6 +253,9 @@ function Grant-Perms {
   # the screensaver (~2 min in, a quirk of Meta's power manager) even if another
   # app is in the foreground.
   A shell appops set $cfg["PKG"] SYSTEM_ALERT_WINDOW allow | Out-Null
+  # Device admin (force-lock only): lets Immortal turn the screen off for its idle
+  # and overnight sleep features via lockNow(). Harmless if it can't be set.
+  A shell dpm set-active-admin "$($cfg["PKG"])/.AdminReceiver" | Out-Null
   Ok "Permissions granted"
 }
 function Disable-Verifier {
@@ -430,6 +433,8 @@ if ($Restore) {
   Step "Re-enabling Meta's presence detector"
   A shell pm enable $cfg["PRESENCE_PKG"] | Out-Null
   Ok "Presence detector restored"
+  Step "Removing Immortal's screen-off device admin"
+  A shell dpm remove-active-admin "$($cfg["PKG"])/.AdminReceiver" | Out-Null; Ok "Device admin removed"
   Step "Restoring stock launcher"
   A shell cmd package set-home-activity $cfg["STOCK_HOME"] | Out-Null; Ok "Home restored ($($cfg["STOCK_HOME"]))"
   Step "Restoring stock screensaver"

@@ -15,7 +15,10 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+      SettingsGuard.reaffirmAdb(context)
       SettingsGuard.reaffirmScreensaver(context)
+      // Alarms don't survive a reboot: re-arm the overnight window and apply it now.
+      SleepScheduler.applyOvernightNow(context)
     }
   }
 }

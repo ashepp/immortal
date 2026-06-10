@@ -171,6 +171,26 @@
             </intent-filter>
         </receiver>
 
+        <!-- Device admin (force-lock only): lets Immortal turn the screen off for the
+             idle-timeout and overnight-sleep features via lockNow(). Activated by
+             provisioning with `dpm set-active-admin`; a no-op until then. -->
+        <receiver
+            android:name=".AdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Internal alarms for the idle and overnight screen-off features. -->
+        <receiver
+            android:name=".SleepReceiver"
+            android:exported="false" />
+
         <!-- Custom screensaver (Dream), set via secure setting screensaver_components. -->
         <service
             android:name=".PhotoDreamService"
