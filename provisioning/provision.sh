@@ -16,6 +16,8 @@
 #   ./provision.sh --overlay-fix  fix the Gen-1 white-on-white installer dialog
 #   ./provision.sh --shizuku  start the Shizuku server (optional; for apps that
 #                             use the Shizuku API, e.g. Aurora's Shizuku mode)
+#   ./provision.sh --alexa    restore the original Amazon Alexa app (the "hey"
+#                             free tier): revive falcon + install the wake word
 
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -461,6 +463,135 @@ set_screensaver() {
   ok "Screensaver = $DREAM_SERVICE"
 }
 
+# ----- Alexa restore (the "hey" free tier) -----------------------------------
+# Revives the original Amazon Alexa client ("falcon") on this locked, unrooted
+# Portal: reconstruct our patched+signed APK from the PUBLIC stock dump via our
+# binary diff (we never host Amazon's binary), install it, apply the privileged
+# grants, then install the "hey" wake-word app. Optional, opt-in, and NON-FATAL:
+# a failure here never aborts an otherwise-successful provision. Config in
+# config.env (ALEXA_* / FALCON_* / MILLENNIUM_*); local-path overrides let us
+# test against built artifacts before the hosted URLs exist.
+sha256() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  else echo ""; fi
+}
+
+restore_alexa() {
+  local FP="${FALCON_PKG:-com.amazon.alexa.multimodal.falcon}"
+  local SIM="$FP/com.amazon.alexa.multimodal.falcon.SIMActivity"
+  local work="$SCRIPT_DIR/alexa"; mkdir -p "$work"
+  local patched=""
+  step "Restoring Amazon Alexa (reviving the original falcon client)"
+
+  # 1. Obtain the patched+signed falcon APK — a local build if given, else
+  #    reconstruct it byte-identically from the public stock APK + our diff.
+  if [ -n "${FALCON_PATCHED_LOCAL:-}" ] && [ -f "$FALCON_PATCHED_LOCAL" ]; then
+    patched="$FALCON_PATCHED_LOCAL"; ok "Using local patched falcon ($(basename "$patched"))"
+  else
+    command -v bspatch >/dev/null 2>&1 || { warn "bspatch not found (macOS ships it; Linux: apt/brew install bsdiff). Skipping Alexa."; return 1; }
+    local stock="${FALCON_STOCK_LOCAL:-$work/stock-falcon.apk}"
+    if [ ! -f "$stock" ] || { [ -n "${FALCON_STOCK_SHA256:-}" ] && [ "$(sha256 "$stock")" != "$FALCON_STOCK_SHA256" ]; }; then
+      [ -n "${FALCON_STOCK_URL:-}" ] || { warn "No FALCON_STOCK_URL configured — skipping Alexa."; return 1; }
+      step "Downloading stock falcon (~120 MB) from the public firmware dump"
+      curl -fSL --retry 2 -o "$work/stock-falcon.apk" "$FALCON_STOCK_URL" || { warn "Stock download failed — skipping Alexa."; return 1; }
+      stock="$work/stock-falcon.apk"
+    fi
+    if [ -n "${FALCON_STOCK_SHA256:-}" ] && [ "$(sha256 "$stock")" != "$FALCON_STOCK_SHA256" ]; then warn "Stock falcon checksum mismatch — skipping Alexa."; return 1; fi
+    local diff="${FALCON_BSDIFF_LOCAL:-$work/falcon.bsdiff}"
+    if [ ! -f "$diff" ]; then
+      [ -n "${FALCON_BSDIFF_URL:-}" ] || { warn "No falcon patch (FALCON_BSDIFF_URL/LOCAL) — skipping Alexa."; return 1; }
+      step "Downloading the falcon patch"
+      curl -fSL --retry 2 -o "$work/falcon.bsdiff" "$FALCON_BSDIFF_URL" || { warn "Patch download failed — skipping Alexa."; return 1; }
+      diff="$work/falcon.bsdiff"
+    fi
+    step "Reconstructing the patched falcon (bspatch)"
+    bspatch "$stock" "$work/falcon-patched.apk" "$diff" || { warn "bspatch failed — skipping Alexa."; return 1; }
+    patched="$work/falcon-patched.apk"
+    if [ -n "${FALCON_RESULT_SHA256:-}" ] && [ "$(sha256 "$patched")" != "$FALCON_RESULT_SHA256" ]; then warn "Reconstructed falcon checksum mismatch (bad stock or diff) — skipping Alexa."; return 1; fi
+    ok "Reconstructed + verified byte-identical"
+  fi
+
+  # 2. Install falcon — `install -r` ONLY. NEVER uninstall: wiping falcon's data
+  #    drops its Amazon registration and the next launch mints a NEW ghost device.
+  step "Installing falcon"
+  local out; out="$(a install -r "$patched" 2>&1)" || true
+  if printf '%s' "$out" | grep -q Success; then ok "falcon installed"
+  elif printf '%s' "$out" | grep -q INSTALL_FAILED_VERSION_DOWNGRADE; then ok "falcon already current"
+  elif printf '%s' "$out" | grep -qi duplicate; then warn "Duplicate-permission conflict with com.amazon.dee.app — needs the coexistence build. Skipping."; return 1
+  elif a shell pm path "$FP" >/dev/null 2>&1; then warn "install -r reported an issue but falcon is present; continuing"
+  else warn "falcon install failed — skipping Alexa."; return 1; fi
+
+  # 3. Provision falcon (privileged grants; persist across reboot).
+  step "Provisioning falcon"
+  a shell pm grant "$FP" android.permission.READ_PHONE_STATE     >/dev/null 2>&1
+  a shell pm grant "$FP" android.permission.INTERACT_ACROSS_USERS >/dev/null 2>&1
+  a shell pm grant "$FP" android.permission.RECORD_AUDIO          >/dev/null 2>&1
+  a shell settings put secure user_setup_complete 1               >/dev/null 2>&1
+  a shell appops set "$FP" SYSTEM_ALERT_WINDOW allow              >/dev/null 2>&1
+  ok "falcon provisioned"
+
+  # 4. millennium = the "hey" wake-word app (drives falcon hands-free).
+  local MP="${MILLENNIUM_PKG:-com.millennium}"
+  local mapk="${MILLENNIUM_APK_LOCAL:-}"
+  if [ -z "$mapk" ] && [ -n "${MILLENNIUM_APK_URL:-}" ]; then
+    step "Downloading the hey (millennium) app"
+    if curl -fSL --retry 2 -o "$work/millennium.apk" "$MILLENNIUM_APK_URL" 2>/dev/null; then mapk="$work/millennium.apk"; else warn "millennium download failed (Alexa text/voice still works; wake word needs it)"; fi
+  fi
+  if [ -n "$mapk" ] && [ -f "$mapk" ]; then
+    step "Installing hey (millennium)"
+    a install -r "$mapk" >/dev/null 2>&1 && ok "millennium installed" || warn "millennium install failed"
+  fi
+  a shell pm path "$MP" >/dev/null 2>&1 && a shell pm grant "$MP" android.permission.RECORD_AUDIO >/dev/null 2>&1
+
+  # 5. Launch falcon, guide the Amazon account link, wait for ReadyState.
+  step "Launching falcon to connect"
+  a shell am start -n "$SIM" >/dev/null 2>&1
+  printf "  %sIf this Portal isn't linked to your Amazon account yet, finish the on-screen Alexa\n  sign-in now.%s (Already-linked devices reconnect automatically.)\n" "$Y" "$N"
+  printf "  %sWaiting for Alexa to connect (needs Wi-Fi + a linked account)…%s\n" "$D" "$N"
+  a logcat -c >/dev/null 2>&1 || true
+  local i ready=0
+  for i in $(seq 1 24); do
+    if a logcat -d 2>/dev/null | grep -q 'in ReadyState'; then ready=1; break; fi
+    sleep 5
+  done
+  if [ "$ready" = 1 ]; then
+    a shell pm path "$MP" >/dev/null 2>&1 && a shell am start -n "$MP/com.millennium.ui.HeyActivity" >/dev/null 2>&1
+    ok "Alexa connected (ReadyState) — say \"Hey Alexa, what's the weather?\""
+    printf "  %sOnce linked, you can hide falcon's icon from the launcher — it runs headless.%s\n" "$D" "$N"
+  else
+    warn "Alexa didn't connect within ~2 min. Check Wi-Fi + that the Amazon account is linked, then re-run './provision.sh --alexa'."
+  fi
+}
+
+maybe_restore_alexa() {
+  # RESTORE_ALEXA in config.env forces on/off for unattended runs; blank => ask
+  # (only when interactive — a piped/CI run defaults to skipping).
+  local want="${RESTORE_ALEXA:-}"
+  if [ -z "$want" ]; then
+    if [ -t 0 ]; then
+      printf "\n%sRestore Amazon Alexa on this Portal?%s Revives the original Alexa app —\n" "$B" "$N"
+      printf "  hands-free \"Hey Alexa\", with text, voice and visual answers. %s[y/N]%s " "$B" "$N"
+      local ans; read -r ans || ans=""
+      case "$ans" in [Yy]*) want=true ;; *) want=false ;; esac
+    else
+      want=false
+    fi
+  fi
+  [ "$want" = true ] && restore_alexa || true
+}
+
+restore_alexa_undo() {
+  # Remove only OUR wake-word app. Leave falcon installed on purpose:
+  # uninstalling it drops the Amazon registration and mints a new ghost device.
+  local MP="${MILLENNIUM_PKG:-com.millennium}"
+  if a shell pm path "$MP" >/dev/null 2>&1; then
+    step "Removing the hey (millennium) wake-word app"
+    a uninstall "$MP" >/dev/null 2>&1 && ok "millennium removed" || warn "Couldn't remove millennium"
+    warn "Amazon Alexa (falcon) is left installed on purpose — uninstalling it would register a NEW device with Amazon. Remove it by hand only if you understand that."
+  fi
+}
+
 # ----- modes -----------------------------------------------------------------
 do_provision() {
   printf "%sPortal Provisioner%s\n" "$B" "$N"
@@ -481,6 +612,7 @@ do_provision() {
   snapshot_stock
   set_launcher
   set_screensaver
+  maybe_restore_alexa
   a shell input keyevent KEYCODE_HOME >/dev/null 2>&1
   printf "\n%s✓ Done. Your Portal is provisioned.%s\n" "$G$B" "$N"
   printf "%sTo undo everything: re-run and choose restore (./provision.sh --restore).%s\n" "$D" "$N"
@@ -514,6 +646,7 @@ do_restore() {
   a shell pm enable "$PRESENCE_PKG" >/dev/null 2>&1; ok "Presence detector restored"
   step "Removing Immortal's screen-off device admin"
   a shell dpm remove-active-admin "$PKG/.AdminReceiver" >/dev/null 2>&1 || true; ok "Device admin removed"
+  restore_alexa_undo
   step "Restoring stock launcher"
   a shell cmd package set-home-activity "$STOCK_HOME" >/dev/null 2>&1; ok "Home restored ($STOCK_HOME)"
   step "Restoring stock screensaver"
@@ -548,7 +681,8 @@ case "${1:-}" in
   --installd|-d) resolve_adb; wait_for_device; start_installd ;;
   --overlay-fix) resolve_adb; wait_for_device; disable_installer_overlay ;;
   --shizuku|-z) resolve_adb; wait_for_device; start_shizuku ;;
-  --help|-h)    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  --alexa|-A)   resolve_adb; wait_for_device; restore_alexa ;;
+  --help|-h)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;
   *)            die "Unknown option: $1 (use --restore, --status, or no argument)" ;;
 esac
