@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.35 (2026-06-13)
+
+A push-to-talk voice button in the header, and a tidier top bar.
+
+- **New "hey" button** in the home header — a mic button that wakes your voice assistant on tap (push-to-talk), so you don't have to say the wake word. It appears only when the companion **Millennium** voice app is installed; the launcher just sends the request, Millennium picks the active assistant and handles the rest.
+- **Clock moved to the top-left corner**, with the screensaver and "hey" buttons grouped to its right — cleaner now that there's more than one button up there.
+- **Provisioning kit:** Shizuku is now installed + started on **every** Portal (not just the Gen-1), as a generally useful privileged broker. New **opt-in "Restore Amazon Alexa"** step revives the original on-device Alexa client (`./provision.sh --alexa`, or answer the prompt during setup).
+
 ## 1.30 (2026-06-08)
 
 A 24-hour clock option — by community request.
