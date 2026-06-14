@@ -1,3 +1,9 @@
 # Auto-downloaded Android platform-tools (fetched on first run if adb is missing)
 platform-tools/
 *.zip
+
+# Alexa-restore work dir: downloaded stock falcon (~120MB) + bsdiff + reconstructed apk
+alexa/
+
+# Downloaded/staged client APKs (immortal.apk is fetched from the release on first run)
+apks/*.apk

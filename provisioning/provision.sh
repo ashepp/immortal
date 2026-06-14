@@ -477,6 +477,20 @@ restore_alexa() {
   local patched=""
   step "Restoring Amazon Alexa (reviving the original falcon client)"
 
+  # Gate: Android 10+ Portals (e.g. the Portal Go) HARD-BLOCK background mic capture for
+  # sideloaded apps — even a foregroundServiceType=microphone FGS is silenced — so falcon
+  # never receives audio during the wake/button handoff (verified exhaustively on a clean
+  # provision). Alexa revival is supported on A9-and-below ONLY for now. The launcher itself
+  # still installs fine on A10. Override with ALEXA_FORCE_A10=1 to attempt anyway (for testing
+  # other A10 families). See the mic-management notes / DISTRIBUTION.md.
+  local sdk; sdk="$(a shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r')"
+  if [ -n "$sdk" ] && [ "$sdk" -ge 29 ] 2>/dev/null && [ "${ALEXA_FORCE_A10:-}" != 1 ]; then
+    warn "Skipping Alexa — not supported on this Portal yet (Android 10+, SDK $sdk blocks background mic for sideloaded apps)."
+    printf "  %sThe launcher is installed and working; only the Alexa restore is skipped.%s\n" "$D" "$N"
+    printf "  %s(A10 support is in research. To attempt it anyway for testing: ALEXA_FORCE_A10=1 ./provision.sh --alexa)%s\n" "$D" "$N"
+    return 0
+  fi
+
   # 1. Obtain the patched+signed falcon APK — a local build if given, else
   #    reconstruct it byte-identically from the public stock APK + our diff.
   if [ -n "${FALCON_PATCHED_LOCAL:-}" ] && [ -f "$FALCON_PATCHED_LOCAL" ]; then
