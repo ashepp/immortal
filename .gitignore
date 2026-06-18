@@ -24,6 +24,10 @@ keystore.properties
 provisioning/apks/*.apk
 _chk*.png
 
+# Per-device fleet inventory written by `provision.sh --fleet`. Contains each
+# device's agent auth TOKEN — never commit (the repo is public).
+provisioning/fleet/
+
 # Internal strategy/planning notes — never publish.
 _planning/
 

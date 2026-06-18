@@ -13,7 +13,7 @@
     powershell -ExecutionPolicy Bypass -File provision.ps1 -OverlayFix # fix Gen-1 installer dialog
     powershell -ExecutionPolicy Bypass -File provision.ps1 -Alexa      # restore the original Amazon Alexa app
 #>
-param([switch]$Restore, [switch]$Status, [switch]$Apps, [switch]$Installd, [switch]$Shizuku, [switch]$OverlayFix, [switch]$Alexa)
+param([switch]$Restore, [switch]$Status, [switch]$Apps, [switch]$Installd, [switch]$Shizuku, [switch]$OverlayFix, [switch]$Fleet, [switch]$WifiAdb, [switch]$Alexa)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -248,8 +248,12 @@ function Grant-Perms {
   foreach ($p in ($cfg["PERMISSIONS"] -split "\s+")) { if ($p) { A shell pm grant $cfg["PKG"] $p | Out-Null } }
   # Self-healing: lets Immortal reaffirm its screensaver settings if reset.
   A shell pm grant $cfg["PKG"] android.permission.WRITE_SECURE_SETTINGS | Out-Null
-  # Lets the "Install an APK" browser see downloaded APKs without a prompt.
+  # Lets the "Install an APK" browser see downloaded APKs, and the fleet agent
+  # read/write /sdcard over WiFi.
   A shell pm grant $cfg["PKG"] android.permission.READ_EXTERNAL_STORAGE | Out-Null
+  A shell pm grant $cfg["PKG"] android.permission.WRITE_EXTERNAL_STORAGE | Out-Null
+  # Lets the fleet agent's /logcat endpoint read system-wide logs (development perm).
+  A shell pm grant $cfg["PKG"] android.permission.READ_LOGS | Out-Null
   # Lets Immortal bring the photo frame back instantly when the system force-wakes
   # the screensaver (~2 min in, a quirk of Meta's power manager) even if another
   # app is in the foreground.
@@ -540,7 +544,97 @@ function Load-State {
   }
 }
 
+function Enable-Fleet {
+  # See provision.sh enable_fleet() for the rationale: hand the app a provision.json
+  # in its shell-writable external dir, (re)launch it, read agent.json back for the
+  # token. The agent is the persistent WiFi channel; we never switch the device to
+  # raw adb-over-WiFi here (that restarts adbd, killing the shell helpers).
+  if ($cfg["ENABLE_FLEET"] -ne "true") { return }
+  Step "Enabling the WiFi fleet agent"
+  $pkg = $cfg["PKG"]
+  $filesDir = "/sdcard/Android/data/$pkg/files/fleet"
+  $name = $cfg["FLEET_NAME"]
+  if (-not $name) { $name = Read-Host "  Name this Portal for the fleet dashboard (e.g. Living Room), Enter to skip" }
+  A shell "mkdir -p '$filesDir'" | Out-Null
+  if ($name) {
+    $esc = ($name -replace '\\','\\') -replace '"','\"'
+    A shell "echo '{\""enabled\"":true,\""name\"":\""$esc\""}' > '$filesDir/provision.json'" | Out-Null
+  } else {
+    A shell "echo '{\""enabled\"":true}' > '$filesDir/provision.json'" | Out-Null
+  }
+  A shell "am force-stop $pkg" | Out-Null
+  A shell "am start -n $($cfg["HOME_ACTIVITY"])" | Out-Null
+  $json = ""
+  for ($i = 0; $i -lt 15; $i++) {
+    $json = ("$(A shell "cat '$filesDir/agent.json' 2>/dev/null")" -replace "`r","")
+    if ($json -match '"enabled":true') { break }
+    Start-Sleep -Seconds 1
+  }
+  $token = if ($json -match '"token":"([0-9a-f]+)"') { $Matches[1] } else { "" }
+  if (-not $token) { Warn "Fleet agent didn't report a token — open Immortal once, then re-run provision.ps1 -Fleet"; return }
+  if (-not $name -and $json -match '"name":"([^"]*)"') { $name = $Matches[1] }
+  $port = if ($json -match '"port":([0-9]+)') { $Matches[1] } elseif ($cfg["FLEET_AGENT_PORT"]) { $cfg["FLEET_AGENT_PORT"] } else { "8723" }
+
+  $ip = ""
+  if ("$(A shell "ip -f inet addr show wlan0 2>/dev/null")" -match 'inet (\d+\.\d+\.\d+\.\d+)') { $ip = $Matches[1] }
+  Record-FleetInventory $name $ip $token $port
+  $suffix = ""
+  if ($name) { $suffix += " as `"$name`"" }
+  if ($ip) { $suffix += " at $($ip):$port" }
+  Ok "Fleet agent enabled$suffix"
+}
+
+function Record-FleetInventory($name, $ip, $token, $port) {
+  # One file per device (keyed by serial) under fleet/ — contains the agent TOKEN,
+  # so fleet/ is gitignored.
+  $serial = if ($env:ANDROID_SERIAL) { $env:ANDROID_SERIAL } else { "$(A get-serialno)".Trim() }
+  $model = "$(A shell getprop ro.product.model)".Trim()
+  New-Item -ItemType Directory -Force -Path "fleet" | Out-Null
+  $en = ($name -replace '\\','\\') -replace '"','\"'
+  $em = ($model -replace '\\','\\') -replace '"','\"'
+  $json = @"
+{
+  "serial": "$serial",
+  "name": "$en",
+  "model": "$em",
+  "ip": "$ip",
+  "agentPort": $port,
+  "token": "$token"
+}
+"@
+  Set-Content -Path "fleet/$serial.json" -Value $json -Encoding UTF8
+  Ok "Recorded fleet/$serial.json"
+}
+
+function Enable-WifiAdbNow {
+  # ON-DEMAND ONLY (not part of provisioning). Raw adb-over-WiFi for power-user
+  # shell / scrcpy. Caveats: `adb tcpip` restarts adbd, pausing Shizuku + the
+  # install daemon until the next USB run or reboot, and it doesn't survive a
+  # reboot. The Fleet AGENT is the persistent channel (incl. files + logcat).
+  $ip = ""
+  if ("$(A shell "ip -f inet addr show wlan0 2>/dev/null")" -match 'inet (\d+\.\d+\.\d+\.\d+)') { $ip = $Matches[1] }
+  if (-not $ip) { Die "This Portal isn't on WiFi." }
+  Step "Enabling adb-over-WiFi (temporary; pauses Shizuku + the install daemon)"
+  A tcpip 5555 *> $null
+  if ($?) {
+    Ok "adb-over-WiFi live — connect with: adb connect $($ip):5555"
+    Warn "Shizuku and the silent-install daemon are now paused; re-run the kit over USB (or reboot) to restore them."
+  } else { Die "adb tcpip 5555 failed." }
+}
+
 # ----- modes -----------------------------------------------------------------
+if ($Fleet) {
+  Wait-Device
+  Enable-Fleet
+  exit 0
+}
+
+if ($WifiAdb) {
+  Wait-Device
+  Enable-WifiAdbNow
+  exit 0
+}
+
 if ($Installd) {
   Wait-Device
   Start-Installd
@@ -656,6 +750,7 @@ Disable-Presence
 Snapshot-Stock
 Set-Launcher
 Set-Screensaver
+Enable-Fleet
 Maybe-Restore-Alexa
 A shell input keyevent KEYCODE_HOME | Out-Null
 Write-Host "`n[ok] Done. Your Portal is provisioned." -ForegroundColor Green

@@ -107,6 +107,37 @@ out of the box. You can run just this step later:
 F-Droid entries are `id` or `id:versionCode` (pin the arm64 build for multi-ABI
 apps like VLC). `PREINSTALL_APKS` are direct APK URLs for your own apps.
 
+### WiFi fleet management
+
+`ENABLE_FLEET=true` turns on Immortal's in-app **Fleet Agent** during setup: a
+small foreground service the device runs so you can deploy/update apps, push
+config, browse files, and read logcat **over WiFi**, from the
+[portal-explorer](../../portal-explorer) "Fleet" view — no USB cable per device.
+Because it's an app service it **survives a reboot**, which adb-over-WiFi can't
+here (the TCP port is a root-only system property on these non-root Portals).
+Provisioning records this device — name, IP, and the agent's auth token — to
+`fleet/<serial>.json` for the laptop tool. (That folder holds secrets and is
+gitignored.)
+
+```bash
+./provision.sh --fleet          # macOS/Linux: name + enable the agent, record the device
+# powershell ... provision.ps1 -Fleet   # Windows
+```
+
+You're prompted for a friendly name (e.g. "Living Room Left") unless you preset
+`FLEET_NAME`. After a reboot the agent comes back on its own — nothing to re-arm.
+
+Provisioning deliberately does **not** switch the Portal into raw adb-over-WiFi:
+`adb tcpip` restarts adbd, which would stop Shizuku and the silent-install daemon,
+and it doesn't survive a reboot anyway. The agent is the persistent channel. If
+you occasionally need a raw adb shell or scrcpy mirroring, enable it on demand
+(it pauses those helpers until the next USB run / reboot):
+
+```bash
+./provision.sh --wifi-adb       # macOS/Linux
+# powershell ... provision.ps1 -WifiAdb   # Windows
+```
+
 ## Command line (optional)
 
 ```bash

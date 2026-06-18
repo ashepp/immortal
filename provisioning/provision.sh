@@ -16,6 +16,10 @@
 #   ./provision.sh --overlay-fix  fix the Gen-1 white-on-white installer dialog
 #   ./provision.sh --shizuku  start the Shizuku server (optional; for apps that
 #                             use the Shizuku API, e.g. Aurora's Shizuku mode)
+#   ./provision.sh --fleet    enable the WiFi fleet agent and record this device
+#                             for the laptop fleet tool (the persistent channel)
+#   ./provision.sh --wifi-adb on-demand raw adb-over-WiFi for shell/scrcpy (temp;
+#                             pauses Shizuku + the install daemon, resets on reboot)
 #   ./provision.sh --alexa    restore the original Amazon Alexa app (the "hey"
 #                             free tier): revive falcon + install the wake word
 
@@ -318,8 +322,13 @@ grant_perms() {
   for p in $PERMISSIONS; do a shell pm grant "$PKG" "$p" >/dev/null 2>&1; done
   # Self-healing: lets Immortal reaffirm its screensaver settings if reset.
   a shell pm grant "$PKG" android.permission.WRITE_SECURE_SETTINGS >/dev/null 2>&1
-  # Lets the "Install an APK" browser see downloaded APKs without a prompt.
+  # Lets the "Install an APK" browser see downloaded APKs, and the fleet agent
+  # read/write /sdcard over WiFi.
   a shell pm grant "$PKG" android.permission.READ_EXTERNAL_STORAGE >/dev/null 2>&1
+  a shell pm grant "$PKG" android.permission.WRITE_EXTERNAL_STORAGE >/dev/null 2>&1
+  # Lets the fleet agent's /logcat endpoint read system-wide logs (READ_LOGS is a
+  # development permission, so pm grant works). Harmless if it can't be granted.
+  a shell pm grant "$PKG" android.permission.READ_LOGS >/dev/null 2>&1
   # Lets Immortal bring the photo frame back instantly when the system force-wakes
   # the screensaver (~2 min in, a quirk of Meta's power manager) even if another
   # app is in the foreground. SYSTEM_ALERT_WINDOW holders may start activities
@@ -646,6 +655,96 @@ restore_alexa_undo() {
 }
 
 # ----- modes -----------------------------------------------------------------
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+enable_fleet() {
+  # Turn on the in-app Fleet Agent and record this device for the laptop tool.
+  # We can't write the app's private prefs from the shell user, so we hand it a
+  # provision.json in its shell-writable external files dir and (re)launch it; the
+  # app applies it on startup and writes agent.json (with the generated token)
+  # back for us to read. The agent is the persistent WiFi channel; we never switch
+  # the device to adb-over-WiFi here (that restarts adbd, killing the shell helpers).
+  [ "${ENABLE_FLEET:-true}" = true ] || return
+  step "Enabling the WiFi fleet agent"
+  local files_dir="/sdcard/Android/data/$PKG/files/fleet"
+  local name="${FLEET_NAME:-}"
+  if [ -z "$name" ] && [ -t 0 ]; then
+    printf "  %sName this Portal for the fleet dashboard (e.g. \"Living Room\"), Enter to skip: %s" "$D" "$N"
+    IFS= read -r name || name=""
+  fi
+  a shell "mkdir -p '$files_dir'" >/dev/null 2>&1
+  if [ -n "$name" ]; then
+    a shell "echo '{\"enabled\":true,\"name\":\"$(json_escape "$name")\"}' > '$files_dir/provision.json'" >/dev/null 2>&1
+  else
+    a shell "echo '{\"enabled\":true}' > '$files_dir/provision.json'" >/dev/null 2>&1
+  fi
+  # Force a fresh process so ImmortalApp.onCreate consumes provision.json.
+  a shell "am force-stop $PKG" >/dev/null 2>&1
+  a shell "am start -n $HOME_ACTIVITY" >/dev/null 2>&1
+  # Poll for the agent manifest the app writes back.
+  local json="" try=0
+  while [ "$try" -lt 15 ]; do
+    json="$(a shell "cat '$files_dir/agent.json' 2>/dev/null" | tr -d '\r')"
+    case "$json" in *'"enabled":true'*) break ;; esac
+    try=$((try + 1)); sleep 1
+  done
+  local token; token="$(printf '%s' "$json" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
+  if [ -z "$token" ]; then
+    warn "Fleet agent didn't report a token — open Immortal once, then re-run ./provision.sh --fleet"
+    return
+  fi
+  [ -z "$name" ] && name="$(printf '%s' "$json" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')"
+  local port; port="$(printf '%s' "$json" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')"
+  [ -n "$port" ] || port="${FLEET_AGENT_PORT:-8723}"
+
+  # Capture the WiFi IP (USB still connected) so the laptop tool's inventory knows
+  # where to reach this Portal's agent.
+  local ip; ip="$(a shell "ip -f inet addr show wlan0 2>/dev/null" | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+
+  record_fleet_inventory "$name" "${ip:-}" "$token" "$port"
+  ok "Fleet agent enabled${name:+ as \"$name\"}${ip:+ at $ip:$port}"
+}
+
+record_fleet_inventory() {
+  # One file per device (keyed by serial) under fleet/ — robust to maintain from
+  # shell and trivial for the laptop tool to glob. Contains the agent TOKEN, so
+  # fleet/ is gitignored.
+  local name="$1" ip="$2" token="$3" port="$4"
+  local serial; serial="${ANDROID_SERIAL:-$(a get-serialno 2>/dev/null | tr -d '\r')}"
+  local model; model="$(a shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+  mkdir -p fleet
+  cat > "fleet/${serial}.json" <<EOF
+{
+  "serial": "$serial",
+  "name": "$(json_escape "$name")",
+  "model": "$(json_escape "$model")",
+  "ip": "$ip",
+  "agentPort": $port,
+  "token": "$token"
+}
+EOF
+  ok "Recorded fleet/${serial}.json"
+}
+
+enable_wifi_adb_now() {
+  # ON-DEMAND ONLY — deliberately NOT part of provisioning. Raw adb-over-WiFi is a
+  # power-user convenience (remote shell / scrcpy mirroring). Two honest caveats:
+  #   * `adb tcpip` restarts adbd, which STOPS the shell-started helpers (Shizuku
+  #     and the silent-install daemon) until the next USB kit run or a reboot.
+  #   * It does NOT survive a reboot (the TCP port needs a root-only prop here).
+  # The Fleet AGENT is the persistent channel for managing the device — including
+  # file transfer and logcat — so reach for this only when you specifically need
+  # a raw adb shell or scrcpy.
+  resolve_adb
+  wait_for_device
+  local ip; ip="$(a shell "ip -f inet addr show wlan0 2>/dev/null" | sed -n 's/.*inet \([0-9.]*\).*/\1/p' | head -1)"
+  [ -n "$ip" ] || die "This Portal isn't on WiFi."
+  step "Enabling adb-over-WiFi (temporary; pauses Shizuku + the install daemon)"
+  a tcpip 5555 >/dev/null 2>&1 || die "adb tcpip 5555 failed."
+  ok "adb-over-WiFi live — connect with: adb connect $ip:5555"
+  warn "Shizuku and the silent-install daemon are now paused; re-run the kit over USB (or reboot) to restore them."
+}
+
 do_provision() {
   printf "%sPortal Provisioner%s\n" "$B" "$N"
   printf "%sThis will modify your Portal: install an app, replace the home screen and screensaver,\nand disable Meta's app-install verifier. Run with --restore to undo. %s\n\n" "$D" "$N"
@@ -665,6 +764,7 @@ do_provision() {
   snapshot_stock
   set_launcher
   set_screensaver
+  enable_fleet
   maybe_restore_alexa
   a shell input keyevent KEYCODE_HOME >/dev/null 2>&1
   printf "\n%s✓ Done. Your Portal is provisioned.%s\n" "$G$B" "$N"
@@ -734,6 +834,8 @@ case "${1:-}" in
   --installd|-d) resolve_adb; wait_for_device; start_installd ;;
   --overlay-fix) resolve_adb; wait_for_device; disable_installer_overlay ;;
   --shizuku|-z) resolve_adb; wait_for_device; start_shizuku ;;
+  --fleet|-f)   resolve_adb; wait_for_device; enable_fleet ;;
+  --wifi-adb)   enable_wifi_adb_now ;;
   --alexa|-A)   resolve_adb; wait_for_device; restore_alexa ;;
   --help|-h)    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
   "")           do_provision ;;
