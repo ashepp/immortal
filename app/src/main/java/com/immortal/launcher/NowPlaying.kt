@@ -30,6 +30,7 @@ object NowPlaying {
   const val EXTRA_ARTIST = "artist"
   const val EXTRA_ALBUM = "album"
   const val EXTRA_ART_URL = "artUrl" // absolute cover-art URL (Music Assistant on the LAN)
+  const val EXTRA_ART = "art" // downscaled JPEG cover-art bytes, pre-fetched by ImmortalCast
   const val EXTRA_DURATION_MS = "durationMs"
   const val EXTRA_POSITION_MS = "positionMs"
   const val EXTRA_GROUP = "group"
@@ -56,6 +57,8 @@ data class NowPlayingState(
     val group: String = "",
     val source: String = "",
     val atMs: Long = 0L,
+    /** Pre-fetched cover-art JPEG bytes (ImmortalCast does the LAN fetch for us). */
+    val art: ByteArray? = null,
 ) {
   /** True when there's an actual track to show (playing or paused, with a title). */
   val active: Boolean
@@ -79,6 +82,7 @@ data class NowPlayingState(
             group = intent.getStringExtra(NowPlaying.EXTRA_GROUP).orEmpty(),
             source = intent.getStringExtra(NowPlaying.EXTRA_SOURCE).orEmpty(),
             atMs = intent.getLongExtra(NowPlaying.EXTRA_AT_MS, 0L),
+            art = intent.getByteArrayExtra(NowPlaying.EXTRA_ART),
         )
   }
 }

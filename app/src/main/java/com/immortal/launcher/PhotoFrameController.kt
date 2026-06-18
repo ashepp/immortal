@@ -269,6 +269,31 @@ class PhotoFrameController(
     lp.setMargins(0, 0, dp(40), dp(44))
     root.addView(nowPlayingCard, lp)
 
+    // Text first, art second: the cover sits at the right edge and the title/artist
+    // hug it (right-aligned), so there's no dead horizontal space on a bottom-right card.
+    val npCol = LinearLayout(context)
+    npCol.orientation = LinearLayout.VERTICAL
+    npCol.gravity = Gravity.END
+    nowPlayingCard.addView(npCol, LinearLayout.LayoutParams(WRAP, WRAP))
+
+    // Explicit WRAP params: a vertical LinearLayout otherwise defaults children to
+    // MATCH_PARENT width, which pins the column to its first width and re-truncates
+    // longer titles when the track changes.
+    npTitle = text(26f, Color.WHITE, false)
+    npTitle.typeface = Typeface.DEFAULT_BOLD
+    npTitle.maxLines = 1
+    npTitle.ellipsize = TextUtils.TruncateAt.END
+    npTitle.gravity = Gravity.END
+    npTitle.maxWidth = dp(560)
+    npCol.addView(npTitle, LinearLayout.LayoutParams(WRAP, WRAP))
+
+    npArtist = text(18f, 0xCCFFFFFF.toInt(), false)
+    npArtist.maxLines = 1
+    npArtist.ellipsize = TextUtils.TruncateAt.END
+    npArtist.gravity = Gravity.END
+    npArtist.maxWidth = dp(560)
+    npCol.addView(npArtist, LinearLayout.LayoutParams(WRAP, WRAP))
+
     npArt = ImageView(context)
     npArt.scaleType = ImageView.ScaleType.CENTER_CROP
     npArt.clipToOutline = true
@@ -278,26 +303,9 @@ class PhotoFrameController(
             o.setRoundRect(0, 0, v.width, v.height, dp(10).toFloat())
           }
         }
-    nowPlayingCard.addView(npArt, LinearLayout.LayoutParams(dp(72), dp(72)))
-
-    val npCol = LinearLayout(context)
-    npCol.orientation = LinearLayout.VERTICAL
-    val npColLp = LinearLayout.LayoutParams(WRAP, WRAP)
-    npColLp.setMarginStart(dp(16))
-    nowPlayingCard.addView(npCol, npColLp)
-
-    npTitle = text(26f, Color.WHITE, false)
-    npTitle.typeface = Typeface.DEFAULT_BOLD
-    npTitle.maxLines = 1
-    npTitle.ellipsize = TextUtils.TruncateAt.END
-    npTitle.maxWidth = dp(380)
-    npCol.addView(npTitle)
-
-    npArtist = text(18f, 0xCCFFFFFF.toInt(), false)
-    npArtist.maxLines = 1
-    npArtist.ellipsize = TextUtils.TruncateAt.END
-    npArtist.maxWidth = dp(380)
-    npCol.addView(npArtist)
+    val artLp = LinearLayout.LayoutParams(dp(72), dp(72))
+    artLp.setMarginStart(dp(16))
+    nowPlayingCard.addView(npArt, artLp)
   }
 
   /** Reflect the latest now-playing state (called on the main thread). */
@@ -314,11 +322,20 @@ class PhotoFrameController(
     if (s.artUrl != lastArtUrl) {
       lastArtUrl = s.artUrl
       npArt.setImageBitmap(null)
-      npArt.visibility = if (s.artUrl.isBlank()) View.GONE else View.VISIBLE
+      val haveArt = s.art != null || s.artUrl.isNotBlank()
+      npArt.visibility = if (haveArt) View.VISIBLE else View.GONE
       val want = s.artUrl
-      if (want.isNotBlank())
+      val bytes = s.art
+      if (haveArt)
           io.execute {
-            val bmp = runCatching { downloadBitmap(want) }.getOrNull()
+            // ImmortalCast pre-fetches art (the launcher can't reach MA's cleartext
+            // art port), so prefer the broadcast bytes; fall back to a URL download.
+            val bmp =
+                runCatching {
+                      if (bytes != null) BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                      else downloadBitmap(want)
+                    }
+                    .getOrNull()
             ui.post { if (lastArtUrl == want) npArt.setImageBitmap(bmp) }
           }
     }
