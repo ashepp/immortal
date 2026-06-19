@@ -23,6 +23,9 @@
     <!-- Fleet Agent: a foreground service so WiFi device management survives a
          reboot on these non-root Portals (where adb-over-WiFi can't). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Wake the screen on demand (Home Assistant "wake the panel" via the MQTT screen
+         switch). A normal permission; ScreenControl.wake uses a wake lock. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Multi-room now-playing: a media-session foreground service (see
          MultiRoomService). Harmless/unused on the Portal's Android 9/10, where the
          per-type FGS rules don't apply. -->
@@ -51,9 +54,9 @@
          different keys, so a signature permission defined by Millennium couldn't be held by us.
          Defining it on the sender means only Immortal-signed apps hold it -> only we can trigger. -->
     <permission
-        android:name="com.immortal.launcher.permission.HEY_TRIGGER"
+        android:name="${applicationId}.permission.HEY_TRIGGER"
         android:protectionLevel="signature" />
-    <uses-permission android:name="com.immortal.launcher.permission.HEY_TRIGGER" />
+    <uses-permission android:name="${applicationId}.permission.HEY_TRIGGER" />
 
     <application
         android:name=".ImmortalApp"
@@ -163,6 +166,14 @@
             android:label="Choose a folder"
             android:theme="@style/Theme.SampleApp" />
 
+        <!-- App picker for "open this app when the screensaver is dismissed",
+             reachable from the "When dismissed" row in screensaver settings. -->
+        <activity
+            android:name=".ScreensaverDismissAppActivity"
+            android:exported="false"
+            android:label="Open when dismissed"
+            android:theme="@style/Theme.SampleApp" />
+
         <!-- One-field form for pasting a public iCloud / Google Photos shared-album
              link, reachable from the "Shared album link" row in screensaver settings. -->
         <activity
@@ -237,6 +248,12 @@
              it. Not exported (it's an HTTP server, not an Android-component entry). -->
         <service
             android:name=".FleetAgentService"
+            android:exported="false" />
+
+        <!-- MQTT publisher: exposes this Portal to Home Assistant via MQTT Discovery.
+             Off until the user configures a broker in Immortal settings. -->
+        <service
+            android:name=".MqttService"
             android:exported="false" />
 
         <!-- Multi-room now-playing relay: reads the Snapcast group's track off the
