@@ -9,25 +9,39 @@ package com.immortal.launcher
 
 import android.content.ComponentName
 import android.content.Context
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Persisted home-screen AppWidget placements owned by Immortal's AppWidgetHost. */
+/** Persisted home-screen widget placements owned by Immortal's home grid. */
 object HomeWidgetStore {
 
   private const val PREFS = "immortal_home_widgets"
   private const val KEY = "widgets"
 
   data class HomeWidget(
-      val appWidgetId: Int,
-      val providerPackage: String,
-      val providerClass: String,
+      val appWidgetId: Int = 0,
+      val providerPackage: String = "",
+      val providerClass: String = "",
       val spanX: Int = DEFAULT_SPAN_X,
       val spanY: Int = DEFAULT_SPAN_Y,
+      val kind: String = KIND_APP_WIDGET,
+      val customId: String = "",
   ) {
     val provider: ComponentName
       get() = ComponentName(providerPackage, providerClass)
+
+    val key: String
+      get() = if (kind == KIND_APP_WIDGET) "widget:$appWidgetId" else "custom:$customId"
+
+    val isAppWidget: Boolean
+      get() = kind == KIND_APP_WIDGET
   }
+
+  const val KIND_APP_WIDGET = "appwidget"
+  const val KIND_WEATHER = "weather"
+  const val KIND_WORLD_CLOCK = "world_clock"
+  const val KIND_TIMERS = "timers"
 
   const val DEFAULT_SPAN_X = 2
   const val DEFAULT_SPAN_Y = 2
@@ -48,12 +62,25 @@ object HomeWidgetStore {
         .apply()
   }
 
-  fun withAdded(widgets: List<HomeWidget>, widget: HomeWidget): List<HomeWidget> =
-      (widgets.filterNot { it.appWidgetId == widget.appWidgetId } + widget)
-          .distinctBy { it.appWidgetId }
+  fun custom(kind: String, spanX: Int = DEFAULT_SPAN_X, spanY: Int = DEFAULT_SPAN_Y): HomeWidget =
+      HomeWidget(
+          kind = kind,
+          customId = "$kind:${UUID.randomUUID()}",
+          spanX = normalizeSpan(spanX),
+          spanY = normalizeSpan(spanY),
+      )
 
-  fun without(widgets: List<HomeWidget>, appWidgetId: Int): List<HomeWidget> =
-      widgets.filterNot { it.appWidgetId == appWidgetId }
+  fun withAdded(widgets: List<HomeWidget>, widget: HomeWidget): List<HomeWidget> =
+      (widgets.filterNot { it.key == widget.key } + widget).distinctBy { it.key }
+
+  fun without(widgets: List<HomeWidget>, key: String): List<HomeWidget> =
+      widgets.filterNot { it.key == key }
+
+  fun resized(widgets: List<HomeWidget>, key: String, spanX: Int, spanY: Int): List<HomeWidget> =
+      widgets.map {
+        if (it.key == key) it.copy(spanX = normalizeSpan(spanX), spanY = normalizeSpan(spanY))
+        else it
+      }
 
   fun normalizeSpan(span: Int): Int = span.coerceIn(1, MAX_SPAN)
 
@@ -66,7 +93,9 @@ object HomeWidgetStore {
               .put("package", w.providerPackage)
               .put("class", w.providerClass)
               .put("spanX", normalizeSpan(w.spanX))
-              .put("spanY", normalizeSpan(w.spanY)))
+              .put("spanY", normalizeSpan(w.spanY))
+              .put("kind", w.kind)
+              .put("customId", w.customId))
     }
     return arr.toString()
   }
@@ -80,7 +109,12 @@ object HomeWidgetStore {
                     val id = obj.optInt("id", -1)
                     val pkg = obj.optString("package")
                     val cls = obj.optString("class")
-                    if (id <= 0 || pkg.isBlank() || cls.isBlank()) continue
+                    val kind = obj.optString("kind", KIND_APP_WIDGET)
+                    val customId = obj.optString("customId")
+                    if (kind == KIND_APP_WIDGET && (id <= 0 || pkg.isBlank() || cls.isBlank())) {
+                      continue
+                    }
+                    if (kind != KIND_APP_WIDGET && customId.isBlank()) continue
                     add(
                         HomeWidget(
                             appWidgetId = id,
@@ -88,10 +122,12 @@ object HomeWidgetStore {
                             providerClass = cls,
                             spanX = normalizeSpan(obj.optInt("spanX", DEFAULT_SPAN_X)),
                             spanY = normalizeSpan(obj.optInt("spanY", DEFAULT_SPAN_Y)),
+                            kind = kind,
+                            customId = customId,
                         ))
                   }
                 }
-                .distinctBy { it.appWidgetId }
+                .distinctBy { it.key }
           }
           .getOrDefault(emptyList())
 }

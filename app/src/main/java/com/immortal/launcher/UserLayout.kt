@@ -22,6 +22,7 @@ object UserLayout {
 
   private const val PREFS = "immortal_layout"
   private const val KEY = "assignments"
+  private const val KEY_ORDER = "home_order"
 
   /** package id -> folder name (user override). */
   fun load(context: Context): Map<String, String> {
@@ -39,6 +40,22 @@ object UserLayout {
         .apply()
   }
 
+  /** User-defined order of ungrouped home-screen app package IDs. */
+  fun loadOrder(context: Context): List<String> {
+    val raw =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_ORDER, null)
+            ?: return emptyList()
+    return deserializeOrder(raw)
+  }
+
+  fun saveOrder(context: Context, order: List<String>) {
+    context
+        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(KEY_ORDER, serializeOrder(order))
+        .apply()
+  }
+
   /** JSON encode of the assignment map (extracted for testing). */
   internal fun serialize(assignments: Map<String, String>): String {
     val obj = JSONObject()
@@ -53,6 +70,41 @@ object UserLayout {
             buildMap { obj.keys().forEach { k -> put(k, obj.getString(k)) } }
           }
           .getOrDefault(emptyMap())
+
+  internal fun serializeOrder(order: List<String>): String =
+      org.json.JSONArray(order.distinct()).toString()
+
+  internal fun deserializeOrder(raw: String): List<String> =
+      runCatching {
+            val arr = org.json.JSONArray(raw)
+            buildList {
+                  for (i in 0 until arr.length()) {
+                    val id = arr.optString(i)
+                    if (id.isNotBlank() && id !in this) add(id)
+                  }
+                }
+          }
+          .getOrDefault(emptyList())
+
+  fun <T> applyOrder(items: List<T>, order: List<String>, idOf: (T) -> String): List<T> {
+    if (order.isEmpty()) return items
+    val byId = items.associateBy(idOf)
+    val ordered = order.mapNotNull { byId[it] }
+    val orderedIds = order.toSet()
+    val remaining = items.filter { idOf(it) !in orderedIds }
+    return ordered + remaining
+  }
+
+  fun moveOrder(order: List<String>, source: String, target: String): List<String> {
+    if (source == target) return order
+    val mutable = order.toMutableList()
+    val from = mutable.indexOf(source)
+    val to = mutable.indexOf(target)
+    if (from < 0 || to < 0) return order
+    val item = mutable.removeAt(from)
+    mutable.add(to, item)
+    return mutable
+  }
 
   /** A folder name not already used by either the user map or the curated set. */
   fun nextFolderName(existing: Set<String>): String {
