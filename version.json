@@ -1,6 +1,6 @@
 {
-  "versionCode": 49,
-  "versionName": "1.48",
+  "versionCode": 50,
+  "versionName": "1.49",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "This release is headlined by community contributor @MrFruitDude \u2014 huge thanks! It brings a whole suite of new home-screen features:\n\n- Home-screen widgets: add any Android app widget (Home Assistant, Chrome, calendars and more) right on your home screen, on a new free-placement, multi-page grid with a redesigned editing experience.\n- Wallpapers: pick a gradient, a bundled photo, or sync the background to your screensaver (shown blurred), with an optional film-grain texture.\n- World clock: choose which cities your World Clock widget shows.\n- Home-screen timers and alarms.\n\nAlso new: your phone now controls every setting on the Portal. The remote went from a handful of toggles to full control of the screensaver, calendar, display, audio and Home Assistant config \u2014 grouped and tidy, with \"Apply to all Portals\" for a wall of devices and saveable profiles. Editing keeps your place as you type and tells you if a change didn't reach the Portal. Under the hood, every setting now flows through one shared definition, so the on-device screens and the phone remote stay in lockstep."
+  "notes": "Fixes connecting Immortal to Music Assistant for multi-room audio:\n\n- Music Assistant's server port is now configurable, and defaults to 8095 (MA's standard port). Earlier builds assumed a different port, so a normal Music Assistant setup would report \"Can't reach Music Assistant\" even when everything else was correct.\n- Signing in is now optional. If your Music Assistant doesn't require a login, just enter the server address \u2014 no username or password needed. The Sign-in button now also doubles as a connection test, confirming the Portal can reach your server."
 }
