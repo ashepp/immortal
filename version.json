@@ -1,6 +1,6 @@
 {
-  "versionCode": 51,
-  "versionName": "1.50",
+  "versionCode": 52,
+  "versionName": "1.51",
   "apkUrl": "https://github.com/starbrightlab/immortal/releases/latest/download/immortal.apk",
-  "notes": "Adds smart-home notifications and two reliability fixes:\n\n- New: show notifications on your Portal from Home Assistant or any MQTT source \u2014 a title, message, and an optional icon and sound, displayed on a configurable overlay. See the smart-home docs for the message format.\n- New: an MQTT command to bring up the photo-frame screensaver on demand.\n- Fix: the launcher no longer loses its default-home role after a photo-frame crash, so the Portal reliably returns to the Immortal home screen.\n- Fix: you can uninstall apps again from the launcher's edit mode \u2014 tap the pencil, then the red X on an app."
+  "notes": "Fixes overnight screensaver flicker in dark mode on some Portals, and adds the ability to view and rename a device from the phone remote."
 }
