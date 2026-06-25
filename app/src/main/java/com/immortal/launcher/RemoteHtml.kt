@@ -13,6 +13,8 @@ package com.immortal.launcher
  * keyboard + a lower-half touchpad with scroll buttons), **Apps** (presets + app grid), **Setup**
  * (device add/switch + the screensaver/calendar source form that replaced the old standalone LAN
  * form). A per-device session token lives in localStorage; every API call sends it as a Bearer.
+ * The whole roster is also backed up to each paired Portal ([RemoteRoster]) so a fresh browser can
+ * pair one device and get them all back, instead of re-pairing the fleet after storage is evicted.
  *
  * Touchpad scrolling is discrete `▲ ▼` buttons (one big swipe each via `/remote/scroll`): the
  * Portal ignores a stream of tiny per-frame swipes, so a two-finger drag can't drive it.
@@ -27,6 +29,12 @@ object RemoteHtml {
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name=apple-mobile-web-app-capable content=yes>
+<meta name=mobile-web-app-capable content=yes>
+<meta name=theme-color content="#0e0e10">
+<meta name=apple-mobile-web-app-title content="Immortal">
+<meta name=apple-mobile-web-app-status-bar-style content=black>
+<link rel=manifest href="/remote/manifest.webmanifest">
+<link rel=apple-touch-icon href="/remote/app-icon?size=180">
 <title>Immortal remote</title>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -228,6 +236,10 @@ object RemoteHtml {
     </div>
 
     <div id=tabSetup class="panel scroll hide">
+      <div id=installTip class="addpanel hide">
+        <p class=sub style="margin:0 0 8px">Add this remote to your home screen for an app that stays paired between sessions — an installed app's storage isn't cleared like a browser tab's. Use your browser's <b>Share</b>/menu &rsaquo; <b>Add to Home Screen</b>.</p>
+        <button class=link onclick=dismissInstallTip()>Got it</button>
+      </div>
       <div class=label>Devices</div>
       <div class=renamerow>
         <input id=devname maxlength=48 placeholder="Device name" autocomplete=off>
@@ -306,6 +318,10 @@ object RemoteHtml {
   </div>
 
 <script>
+  // Ask the browser to keep our storage durable (Chrome/Android honours this for engaged/installed
+  // sites) so the paired roster survives — complements the per-Portal roster backup and home-screen
+  // install. Best-effort: unsupported or denied is fine, the synced roster still recovers us.
+  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){});
   // Multi-device: a roster of paired Portals {name, base, token} kept on the phone; one is active.
   var DKEY='immortal_remote_devices', AKEY='immortal_remote_active', pendingPeer=null;
   function devicesList(){try{return JSON.parse(localStorage.getItem(DKEY)||'[]');}catch(e){return [];}}
@@ -313,6 +329,16 @@ object RemoteHtml {
   function activeIdx(){var i=parseInt(localStorage.getItem(AKEY)||'0',10),l=devicesList();return (i>=0&&i<l.length)?i:0;}
   function setActive(i){localStorage.setItem(AKEY,String(i));}
   function active(){return devicesList()[activeIdx()]||null;}
+  // Server-synced roster: each paired Portal keeps a backup of this phone's whole roster, so a fresh
+  // browser (storage evicted, different origin, changed IP) can pair ONE Portal and get them all
+  // back. We push on every roster change and pull-and-merge whenever we pair a device.
+  function syncRoster(){var l=devicesList(),body=JSON.stringify({roster:l});l.forEach(function(dv){fetch(dv.base+'/remote/roster',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+dv.token},body:body}).catch(function(){});});}
+  function mergeRoster(server){var l=devicesList(),have={},added=0;l.forEach(function(x){have[x.base]=1;});(server||[]).forEach(function(s){if(s&&s.base&&s.token&&!have[s.base]){l.push({name:s.name||'Portal',base:s.base,token:s.token});have[s.base]=1;added++;}});if(added)saveDevices(l);return added;}
+  function pullRoster(base,token){return fetch(base+'/remote/roster',{headers:{'Authorization':'Bearer '+token}}).then(function(r){return r.json();}).then(function(d){return mergeRoster(d&&d.roster);}).catch(function(){return 0;});}
+  // "Add to Home Screen" tip — the durable-storage path. Hidden once installed (standalone) or dismissed.
+  function isStandalone(){return !!((window.matchMedia&&window.matchMedia('(display-mode:standalone)').matches)||window.navigator.standalone);}
+  function maybeInstallTip(){var t=document.getElementById('installTip');if(!t)return;var done=localStorage.getItem('immortal_remote_a2hs')==='1';t.classList.toggle('hide',isStandalone()||done);}
+  function dismissInstallTip(){localStorage.setItem('immortal_remote_a2hs','1');var t=document.getElementById('installTip');if(t)t.classList.add('hide');}
   function show(view){
     document.getElementById('pairView').classList.toggle('hide',view!=='pair');
     document.getElementById('remoteView').classList.toggle('hide',view!=='remote');
@@ -345,7 +371,9 @@ object RemoteHtml {
         if(d.ok&&d.token){
           var l=devicesList().filter(function(x){return x.base!==location.origin;});
           l.unshift({name:d.name||'Portal',base:location.origin,token:d.token});
-          saveDevices(l);setActive(0);startActive();
+          saveDevices(l);setActive(0);
+          // Rehydrate the rest of the fleet this Portal remembers, then re-push the merged roster.
+          pullRoster(location.origin,d.token).then(function(){syncRoster();startActive();});
         } else document.getElementById('pairErr').textContent='That code didn\'t work. Check the Portal and try again.';
       })
       .catch(function(){document.getElementById('pairErr').textContent='Couldn\'t reach the Portal.';});
@@ -356,7 +384,7 @@ object RemoteHtml {
     sel.value=activeIdx();
   }
   function switchDevice(){setActive(parseInt(document.getElementById('devsel').value,10));document.getElementById('addPanel').classList.add('hide');loadApps();loadPresets();loadSources();}
-  function forgetDevice(){var l=devicesList();if(!l.length)return;l.splice(activeIdx(),1);saveDevices(l);setActive(0);if(l.length){renderDevSel();showTab('remote');}else{location.hash='';show('pair');}}
+  function forgetDevice(){var l=devicesList();if(!l.length)return;l.splice(activeIdx(),1);saveDevices(l);setActive(0);syncRoster();if(l.length){renderDevSel();showTab('remote');}else{location.hash='';show('pair');}}
   function toggleAdd(){var p=document.getElementById('addPanel');p.classList.toggle('hide');document.getElementById('addPair').classList.add('hide');if(!p.classList.contains('hide'))loadDiscovered();}
   function loadDiscovered(){
     api('/remote/devices').then(function(d){
@@ -382,6 +410,8 @@ object RemoteHtml {
         if(d.ok&&d.token){
           var l=devicesList();l.push({name:d.name||pendingPeer.name,base:pendingPeer.base,token:d.token});
           saveDevices(l);setActive(l.length-1);renderDevSel();
+          // Pull anything this peer already knows, then back the merged roster up to every Portal.
+          pullRoster(pendingPeer.base,d.token).then(function(){syncRoster();renderDevSel();});
           document.getElementById('addPanel').classList.add('hide');pendingPeer=null;showTab('remote');
         } else document.getElementById('addErr').textContent='That code didn\'t work.';
       })
@@ -394,7 +424,7 @@ object RemoteHtml {
     });
     if(name==='apps'){loadApps();loadPresets();}
     if(name==='settings'){closeSrcPanel();loadSettings();}
-    if(name==='setup')loadRename();
+    if(name==='setup'){loadRename();maybeInstallTip();}
     if(name==='media')startNowPlaying();else stopNowPlaying();
   }
   // Prefill the rename field with the active Portal's current name (the source of truth on-device).
@@ -413,7 +443,7 @@ object RemoteHtml {
       .then(function(d){
         if(!(d&&d.ok&&(d.applied||[]).indexOf('name')>=0)){msg.textContent='Couldn\'t save the name.';return;}
         var l=devicesList(),i=activeIdx();if(l[i]){l[i].name=v;saveDevices(l);}
-        renderDevSel();inp.value=v;msg.textContent='Saved.';
+        renderDevSel();inp.value=v;msg.textContent='Saved.';syncRoster();
       })
       .catch(function(){msg.textContent='Couldn\'t reach that device.';});
   }
@@ -827,7 +857,7 @@ object RemoteHtml {
   (function(){
     var m=location.hash.match(/pin=(\d{6})/);
     if(m){document.getElementById('pin').value=m[1];pair();}
-    else if(active())startActive();
+    else if(active()){startActive();pullRoster(active().base,active().token).then(function(n){if(n)renderDevSel();});}
     else show('pair');
   })();
 </script>
