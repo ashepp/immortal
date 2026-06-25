@@ -59,8 +59,13 @@ week, a new phone or a private tab starts empty, and a changed Portal IP looks l
 site. To avoid re-pairing the whole fleet in those cases, each paired Portal keeps a **backup of
 your roster**: when storage is lost, just pair **one** Portal again with its PIN and the rest come
 back automatically. The phone re-uploads the merged roster to every Portal whenever it changes, so
-the backups stay current (and a device you **Forget** is dropped from them too). Tip: add the page
-to your home screen — an installed web app's storage isn't evicted, so you rarely hit this at all.
+the backups stay current (and a device you **Forget** is dropped from them too).
+
+Best of all, the remote is an **installable web app** (PWA): from your browser's Share/menu choose
+**Add to Home Screen** and it installs as a standalone "Immortal" app, with the app's own icon. An
+installed app's storage isn't evicted the way a browser tab's is, so once installed you rarely lose
+the roster at all — the per-Portal backup is just the safety net. The remote also asks the browser
+for persistent storage on load (honoured on Chrome/Android), and a *Devices* tab tip points the way.
 
 ## Security
 
@@ -111,13 +116,15 @@ automatically (via `WRITE_SECURE_SETTINGS`) and which comes back on its own afte
 
 ## API
 
-All under the agent's port (default `8723`). `/remote/ui`, `/remote/pair`, `/remote/icon` and
-`/remote/art` are open on the LAN (no secrets); the rest require
-`Authorization: Bearer <session-or-fleet-token>`.
+All under the agent's port (default `8723`). `/remote/ui`, `/remote/manifest.webmanifest`,
+`/remote/app-icon`, `/remote/pair`, `/remote/icon` and `/remote/art` are open on the LAN (no
+secrets); the rest require `Authorization: Bearer <session-or-fleet-token>`.
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/remote/ui` | The remote web page |
+| `GET` | `/remote/manifest.webmanifest` | PWA manifest (installable home-screen app) |
+| `GET` | `/remote/app-icon?size=…` | Immortal's launcher icon (PNG) for install/apple-touch-icon |
 | `POST` | `/remote/pair` | `{"pin":"123456"}` → `{ok, token}` |
 | `GET` | `/remote/apps` | Launchable apps `[{label, packageName}]` |
 | `GET` | `/remote/icon?pkg=…` | App icon (PNG) |

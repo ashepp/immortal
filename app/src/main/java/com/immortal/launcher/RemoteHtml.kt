@@ -29,6 +29,12 @@ object RemoteHtml {
 <meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name=apple-mobile-web-app-capable content=yes>
+<meta name=mobile-web-app-capable content=yes>
+<meta name=theme-color content="#0e0e10">
+<meta name=apple-mobile-web-app-title content="Immortal">
+<meta name=apple-mobile-web-app-status-bar-style content=black>
+<link rel=manifest href="/remote/manifest.webmanifest">
+<link rel=apple-touch-icon href="/remote/app-icon?size=180">
 <title>Immortal remote</title>
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -230,6 +236,10 @@ object RemoteHtml {
     </div>
 
     <div id=tabSetup class="panel scroll hide">
+      <div id=installTip class="addpanel hide">
+        <p class=sub style="margin:0 0 8px">Add this remote to your home screen for an app that stays paired between sessions — an installed app's storage isn't cleared like a browser tab's. Use your browser's <b>Share</b>/menu &rsaquo; <b>Add to Home Screen</b>.</p>
+        <button class=link onclick=dismissInstallTip()>Got it</button>
+      </div>
       <div class=label>Devices</div>
       <div class=renamerow>
         <input id=devname maxlength=48 placeholder="Device name" autocomplete=off>
@@ -308,6 +318,10 @@ object RemoteHtml {
   </div>
 
 <script>
+  // Ask the browser to keep our storage durable (Chrome/Android honours this for engaged/installed
+  // sites) so the paired roster survives — complements the per-Portal roster backup and home-screen
+  // install. Best-effort: unsupported or denied is fine, the synced roster still recovers us.
+  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){});
   // Multi-device: a roster of paired Portals {name, base, token} kept on the phone; one is active.
   var DKEY='immortal_remote_devices', AKEY='immortal_remote_active', pendingPeer=null;
   function devicesList(){try{return JSON.parse(localStorage.getItem(DKEY)||'[]');}catch(e){return [];}}
@@ -321,6 +335,10 @@ object RemoteHtml {
   function syncRoster(){var l=devicesList(),body=JSON.stringify({roster:l});l.forEach(function(dv){fetch(dv.base+'/remote/roster',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+dv.token},body:body}).catch(function(){});});}
   function mergeRoster(server){var l=devicesList(),have={},added=0;l.forEach(function(x){have[x.base]=1;});(server||[]).forEach(function(s){if(s&&s.base&&s.token&&!have[s.base]){l.push({name:s.name||'Portal',base:s.base,token:s.token});have[s.base]=1;added++;}});if(added)saveDevices(l);return added;}
   function pullRoster(base,token){return fetch(base+'/remote/roster',{headers:{'Authorization':'Bearer '+token}}).then(function(r){return r.json();}).then(function(d){return mergeRoster(d&&d.roster);}).catch(function(){return 0;});}
+  // "Add to Home Screen" tip — the durable-storage path. Hidden once installed (standalone) or dismissed.
+  function isStandalone(){return !!((window.matchMedia&&window.matchMedia('(display-mode:standalone)').matches)||window.navigator.standalone);}
+  function maybeInstallTip(){var t=document.getElementById('installTip');if(!t)return;var done=localStorage.getItem('immortal_remote_a2hs')==='1';t.classList.toggle('hide',isStandalone()||done);}
+  function dismissInstallTip(){localStorage.setItem('immortal_remote_a2hs','1');var t=document.getElementById('installTip');if(t)t.classList.add('hide');}
   function show(view){
     document.getElementById('pairView').classList.toggle('hide',view!=='pair');
     document.getElementById('remoteView').classList.toggle('hide',view!=='remote');
@@ -406,7 +424,7 @@ object RemoteHtml {
     });
     if(name==='apps'){loadApps();loadPresets();}
     if(name==='settings'){closeSrcPanel();loadSettings();}
-    if(name==='setup')loadRename();
+    if(name==='setup'){loadRename();maybeInstallTip();}
     if(name==='media')startNowPlaying();else stopNowPlaying();
   }
   // Prefill the rename field with the active Portal's current name (the source of truth on-device).
